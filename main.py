@@ -32,7 +32,7 @@ def apparently_has_logs(message):
     return any(attachment.filename.endswith("html") for attachment in message.attachments)
 
 def check_thread(thread):
-    concerned_people = [x.strip() for x in re.split(r",|&|\band\b", thread.name.rsplit(":", 1)[-1], flags=re.I) if not x.strip().isdigit()]
+    concerned_people = [x.strip() for x in re.split(r",|&|\band\b", thread.name.strip("()").rsplit(":", 1)[-1], flags=re.I) if not x.strip().isdigit()]
 
     if any(t.id in config.damning_tags for t in thread.applied_tags):
         the_list[thread.id] = concerned_people
