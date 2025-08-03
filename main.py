@@ -53,8 +53,8 @@ async def on_ready():
 @bot.event
 async def on_thread_create(thread):
     check_thread(thread)
-    await asyncio.sleep(0.1)
-    if not apparently_has_logs(thread.starter_message):
+    message = await thread.fetch_message(thread.id)
+    if not apparently_has_logs(message):
         await thread.add_tags(discord.Object(id=config.no_logs_tag))
 
 @bot.event
