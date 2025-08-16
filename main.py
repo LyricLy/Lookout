@@ -71,8 +71,12 @@ async def on_message(message):
         await message.channel.remove_tags(discord.Object(id=config.no_logs_tag))
 
 
+async def start():
+    await bot.load_extension("jishaku")
+    await bot.start(config.token)
+
 async def the_bot(_):
-    task = asyncio.create_task(bot.start(config.token))
+    task = asyncio.create_task(start())
     yield
     await bot.close()
 
