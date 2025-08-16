@@ -67,7 +67,7 @@ async def on_thread_update(before, after):
 async def on_raw_thread_delete(payload):
     the_list.pop(payload.thread_id, None)
 
-@bot.event
+@bot.listen()
 async def on_message(message):
     if apparently_has_logs(message) and isinstance(message.channel, discord.Thread):
         await message.channel.remove_tags(discord.Object(id=config.no_logs_tag))
