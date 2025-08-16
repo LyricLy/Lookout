@@ -4,6 +4,7 @@ import re
 import ckdl
 import discord
 from aiohttp import web
+from discord.ext import commands
 
 import config
 
@@ -24,7 +25,8 @@ intents = discord.Intents(
     messages=True,
     message_content=True,
 )
-bot = discord.Client(
+bot = commands.Bot(
+    command_prefix=commands.when_mentioned,
     intents=intents,
 )
 
