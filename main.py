@@ -28,6 +28,8 @@ intents = discord.Intents(
 bot = commands.Bot(
     command_prefix=commands.when_mentioned,
     intents=intents,
+    max_messages=None,
+    help_command=None,
 )
 
 def apparently_has_logs(message):
