@@ -56,10 +56,13 @@ async def on_ready():
 
 @bot.event
 async def on_thread_create(thread):
-    check_thread(thread)
-    message = await thread.fetch_message(thread.id)
-    if not apparently_has_logs(message):
-        await thread.add_tags(discord.Object(id=config.no_logs_tag))
+    if thread.parent.id == config.channel_id:
+        check_thread(thread)
+        message = await thread.fetch_message(thread.id)
+        if not apparently_has_logs(message):
+            await thread.add_tags(discord.Object(id=config.no_logs_tag))
+    if thread.parent.id == config.media_channel_id:
+        await bot.get_channel(config.uploads_channel_id).send(config.upload_message.format(post=thread.mention))
 
 @bot.event
 async def on_thread_update(before, after):
