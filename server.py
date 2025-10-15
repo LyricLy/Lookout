@@ -19,4 +19,5 @@ async def root():
     async with db.execute("SELECT account_name FROM Blacklists") as cur:
         return ckdl.Document([ckdl.Node(None, "-", x) async for x, in cur]).dump(ckdl.EmitterOptions(version=1))  # type: ignore
 
-app.run()
+if __name__ == "__main__":
+    app.run()
