@@ -23,7 +23,7 @@ class Blacklist(commands.Cog):
         self.bot = bot
         self.channel: discord.ForumChannel | None = None
 
-    async def check_thread(self, thread: discord.Thread) -> None:
+    async def check_thread(self, thread: discord.Thread, *, catchup: bool = False) -> None:
         starter = thread.starter_message or await thread.fetch_message(thread.id)
         reason = starter.content if starter.content else None
         await self.bot.db.execute("DELETE FROM Blacklists WHERE thread_id = ?", (thread.id,))
@@ -33,6 +33,16 @@ class Blacklist(commands.Cog):
                 log.debug("%s is blacklisted in thread %d (reason: %s)", player, thread.id, reason)
                 await self.bot.db.execute("INSERT INTO Blacklists (thread_id, account_name, reason) VALUES (?, ?, ?)", (thread.id, player, reason))
         await self.bot.db.commit()
+
+        if not catchup:
+            return
+        async with self.bot.db.execute("SELECT EXISTS(SELECT 1 FROM BlacklistGames WHERE thread_id = ?)", (thread.id,)) as cur:
+            exists, = await cur.fetchone()  # type: ignore
+        if not exists:
+            c = 0
+            async for msg in thread.history(limit=None):
+                c += await self.check_for_logs(msg)
+            log.info("checked thread %d for logs and found %d", thread.id, c)
 
     @commands.Cog.listener()
     async def on_ready(self) -> None:
@@ -45,10 +55,10 @@ class Blacklist(commands.Cog):
         # new threads/updates
         for thread in channel.threads:
             seen.append(thread.id)
-            await self.check_thread(thread)
+            await self.check_thread(thread, catchup=True)
         async for thread in channel.archived_threads(limit=None):
             seen.append(thread.id)
-            await self.check_thread(thread)
+            await self.check_thread(thread, catchup=True)
 
         # removals
         await self.bot.db.execute(f"DELETE FROM Blacklists WHERE thread_id NOT IN ({','.join(map(str, seen))})")
@@ -76,11 +86,7 @@ class Blacklist(commands.Cog):
             await self.bot.db.execute("DELETE FROM Blacklists WHERE thread_id = ?", (payload.thread_id,))
             await self.bot.db.commit()
 
-    @commands.Cog.listener()
-    async def on_message(self, message: discord.Message) -> None:
-        if not isinstance(message.channel, discord.Thread) or message.channel.parent_id != config.channel_id:
-            return
-
+    async def check_for_logs(self, message: discord.Message) -> bool:
         did_anything = False
 
         for attach in message.attachments:
@@ -99,7 +105,14 @@ class Blacklist(commands.Cog):
             await self.bot.db.execute("INSERT OR IGNORE INTO BlacklistGames (thread_id, gist) VALUES (?, ?)", (message.channel.id, gist_of(game)))
             await self.bot.db.commit()
 
-        if did_anything:
+        return did_anything
+
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message) -> None:
+        if not isinstance(message.channel, discord.Thread) or message.channel.parent_id != config.channel_id:
+            return
+
+        if await self.check_for_logs(message):
             await message.channel.remove_tags(discord.Object(id=config.no_logs_tag))
 
 
