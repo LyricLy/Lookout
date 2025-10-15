@@ -17,7 +17,8 @@ async def get_db() -> aiosqlite.Connection:
 async def root():
     db = await get_db()
     async with db.execute("SELECT account_name FROM Blacklists") as cur:
-        return ckdl.Document([ckdl.Node(None, "-", x) async for x, in cur]).dump(ckdl.EmitterOptions(version=1))  # type: ignore
+        dump = ckdl.Document([ckdl.Node(None, "-", x) async for x, in cur]).dump(ckdl.EmitterOptions(version=1))  # type: ignore
+    return quart.Response(dump, mimetype="application/vnd.kdl")
 
 if __name__ == "__main__":
     app.run()
