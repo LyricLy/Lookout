@@ -34,16 +34,6 @@ class Blacklist(commands.Cog):
                 await self.bot.db.execute("INSERT INTO Blacklists (thread_id, account_name, reason) VALUES (?, ?, ?)", (thread.id, player, reason))
         await self.bot.db.commit()
 
-        if not catchup:
-            return
-        async with self.bot.db.execute("SELECT EXISTS(SELECT 1 FROM BlacklistGames WHERE thread_id = ?)", (thread.id,)) as cur:
-            exists, = await cur.fetchone()  # type: ignore
-        if not exists:
-            c = 0
-            async for msg in thread.history(limit=None):
-                c += await self.check_for_logs(msg)
-            log.info("checked thread %d for logs and found %d", thread.id, c)
-
     @commands.Cog.listener()
     async def on_ready(self) -> None:
         channel = self.bot.get_channel(config.channel_id)
