@@ -9,6 +9,7 @@ CREATE TABLE Gamelogs (
 );
 
 CREATE INDEX logs_by_message_id ON Gamelogs (message_id);
+CREATE INDEX logs_by_date ON Gamelogs (approx_date);
 
 CREATE TABLE Games (
     gist TEXT PRIMARY KEY,
@@ -20,7 +21,6 @@ CREATE TABLE Games (
 );
 
 CREATE INDEX games_by_version ON Games (analysis_version);
-CREATE INDEX games_by_date ON Games (approx_date);
 
 CREATE TABLE Blacklists (
     thread_id INTEGER NOT NULL,
