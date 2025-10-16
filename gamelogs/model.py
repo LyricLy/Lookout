@@ -152,7 +152,7 @@ class Identity:
         else:
             return f"{self.role} ({self.faction})"
 
-type Time = tuple[_Literal["day", "night"], int]
+type Time = tuple[int, _Literal["day", "night"]]
 
 @_dataclass(unsafe_hash=True)
 class Player:

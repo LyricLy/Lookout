@@ -4,7 +4,7 @@ import datetime
 import pathlib
 import re
 from sqlite3 import PARSE_DECLTYPES
-from typing import TypedDict
+from typing import TypedDict, Literal
 
 import aiosqlite
 import msgpack
@@ -16,13 +16,16 @@ class JIdentity(TypedDict):
     role: str
     faction: str | None
 
+# reversed froom gamelogs.Time
+Time = tuple[Literal["day", "night"], int]
+
 class JPlayer(TypedDict):
     number: int
     game_name: str
     account_name: str
     starting_ident: JIdentity
     ending_ident: JIdentity
-    died: gamelogs.Time | None
+    died: Time | None
     won: bool 
 
 class JGameResult(TypedDict):
@@ -31,7 +34,7 @@ class JGameResult(TypedDict):
     hunt_reached: int | None
     modifiers: list[str]
     vip: int | None
-    ended: gamelogs.Time
+    ended: Time
 
 
 def ser_faction(faction: gamelogs.Faction | None) -> str | None:
@@ -50,7 +53,7 @@ def ser_player(player: gamelogs.Player) -> JPlayer:
         "account_name": player.account_name,
         "starting_ident": ser_ident(player.starting_ident),
         "ending_ident": ser_ident(player.ending_ident),
-        "died": player.died,
+        "died": (player.died[1], player.died[0]) if player.died else None,
         "won": player.won,
     }
 
@@ -61,7 +64,7 @@ def ser_game_result(game: gamelogs.GameResult) -> JGameResult:
         "hunt_reached": game.hunt_reached,
         "modifiers": game.modifiers,
         "vip": game.vip.number - 1 if game.vip else None,
-        "ended": game.ended,
+        "ended": (game.ended[1], game.ended[0]),
     }
 
 
@@ -81,7 +84,7 @@ def de_player(player: JPlayer) -> gamelogs.Player:
         player["account_name"],
         de_ident(player["starting_ident"]),
         de_ident(player["ending_ident"]),
-        player["died"],
+        (player["died"][1], player["died"][0]) if player["died"] else None,
         player["won"],
     )
 
@@ -92,7 +95,7 @@ def de_game_result(game: JGameResult) -> gamelogs.GameResult:
         game["hunt_reached"],
         game["modifiers"],
         players[game["vip"]] if game["vip"] is not None else None,
-        game["ended"],
+        (game["ended"][1], game["ended"][0]),
     )
 
 

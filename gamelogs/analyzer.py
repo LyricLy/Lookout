@@ -52,7 +52,7 @@ class ResultAnalyzer(Analyzer[None, GameResult]):
         self.hunt_reached = None
         self.in_trib = False
         self.trial_period = False
-        self.time = "day", 1
+        self.time = 1, "day"
         self.modifiers = []
         self.death_popped = False
         self.draw_tomorrow = False
@@ -69,7 +69,7 @@ class ResultAnalyzer(Analyzer[None, GameResult]):
         player = self.players[who]
         if not player.died:
             self.draw_tomorrow = False
-            player.died = ("night", self.time[1]-1) if last_night else self.time
+            player.died = (self.time[0]-1, "night") if last_night else self.time
 
     def get_message(self, message: Message) -> None:
         match message:
@@ -109,13 +109,13 @@ class ResultAnalyzer(Analyzer[None, GameResult]):
             case DayStart(1):
                 self.judge_miscoloured_townies()
             case DayStart(n):
-                self.time = "day", n
+                self.time = n, "day"
                 self.trial_period = False
                 for dc in self.dced:
                     self.kill(dc)
                 self.dced.clear()
             case NightStart(n):
-                self.time = "night", n
+                self.time = n, "night"
                 self.death_popped = False
                 self.in_trib = False
             case LeftTown(who, _):
@@ -128,7 +128,7 @@ class ResultAnalyzer(Analyzer[None, GameResult]):
                     them.won = True
             case HuntWarning(days_left):
                 if not self.hunt_reached:
-                    self.hunt_reached = self.time[1] + days_left - 3
+                    self.hunt_reached = self.time[0] + days_left - 3
             case Tribunal():
                 self.in_trib = True
             case Disconnect(who):
@@ -164,7 +164,7 @@ class ResultAnalyzer(Analyzer[None, GameResult]):
             if self.death_popped:
                 # Death win
                 victor = apocalypse
-            elif self.hunt_reached == self.time[1] - 3:
+            elif self.hunt_reached == self.time[0] - 3:
                 # hunt win
                 victor = coven
             elif self.draw_tomorrow:
