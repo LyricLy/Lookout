@@ -6,7 +6,6 @@ from typing import TypedDict, Literal
 
 import discord
 import gamelogs
-import msgpack
 from discord.ext import commands
 
 import config
@@ -78,6 +77,7 @@ class Gamelogs(commands.Cog):
                 tears.append((attach, "Contains neutrals"))
                 continue
 
+            self.bot.dispatch("game", game)
             c += 1
             await self.bot.db.execute(
                 "INSERT INTO Games (gist, from_log, message_count, analysis, analysis_version) VALUES (?, ?, ?, ?, ?)"

@@ -14,6 +14,7 @@ extensions = [
     "jishaku",
     "..blacklist",
     "..logs",
+    "..stats",
 ]
 
 
