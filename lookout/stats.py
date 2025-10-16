@@ -25,8 +25,12 @@ def cut_up(s: int, n: int) -> tuple[float, float]:
     return (avg + (z*z/(2*n))) / divisor, z/(2*n) * math.sqrt(4 * n * avg * (1-avg) + z*z) / divisor
 
 def show_rate(s: int, n: int) -> str:
-    centre, plus_or_minus = cut_up(s, n)
-    return f"{centre*100:.2f}% ± {plus_or_minus*100:.2f}%"
+    try:
+        centre, plus_or_minus = cut_up(s, n)
+    except ZeroDivisionError:
+        return "N/A (no games)"
+    else:
+        return f"{centre*100:.2f}% ± {plus_or_minus*100:.2f}%"
 
 class RoleClass(enum.Enum):
     TOWN = 0
