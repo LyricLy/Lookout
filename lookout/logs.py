@@ -82,7 +82,7 @@ class Gamelogs(commands.Cog):
                 "ON CONFLICT (gist) DO UPDATE SET from_log = ?2, message_count = ?3, analysis = ?4, analysis_version = ?5 WHERE excluded.message_count > message_count",
                 (gist_of(game), digest, message_count, game, gamelogs.version),
             ) as cur:
-                if cur.lastrowid:
+                if cur.rowcount > 0:
                     self.bot.dispatch("game", game)
                     c += 1
             await self.bot.db.commit()
