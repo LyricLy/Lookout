@@ -62,6 +62,103 @@ class PlayerStats:
 type Players = dict[str, PlayerStats]
 
 
+class Jump(discord.ui.Modal):
+    def __init__(self, container: TopPaginator) -> None:
+        super().__init__(title="Jump to page")
+        self.container = container
+        self.box.component.default = f"{container.page+1}"  # type: ignore
+
+    box = discord.ui.Label(text="Destination", description="A page number or name of a player to jump to.", component=discord.ui.TextInput(max_length=32))
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        t: str = self.box.component.value  # type: ignore
+        try:
+            page = int(t) - 1
+        except ValueError:
+            for idx, player in enumerate(self.container.players):
+                if player.account_name.casefold() == t.casefold():
+                    break
+            else:
+                await interaction.response.send_message(f"I don't know a player called '{t}'.", ephemeral=True)
+                return
+            self.container.page = idx // self.container.per_page
+        else:
+            if not self.container.has_page(page):
+                await interaction.response.send_message(f"Page number {page} is out of bounds.", ephemeral=True)
+                return
+            self.container.page = page
+        self.container.draw()
+        await interaction.response.edit_message(view=self.container.view)
+
+
+class TopPaginator(discord.ui.Container):
+    header = discord.ui.TextDisplay("# Leaderboard")
+    display = discord.ui.TextDisplay("")
+
+    def __init__(self, players: list[PlayerStats]) -> None:
+        super().__init__(accent_colour=discord.Colour(0x6bfc03))
+        self.players = players
+        self.per_page = 15
+        self.page = 0
+        self.draw()
+
+    def has_page(self, num: int) -> bool:
+        return 0 <= num*self.per_page < len(self.players)
+
+    def draw(self, *, obscure: bool = False) -> None:
+        start = self.page*self.per_page
+        lb = "\n".join([f"{start+1}. {('\u200b'*obscure).join(player.account_name)} - {player.ordinal():.0f}" for player in self.players[start:start+self.per_page]])
+        self.display.content = f"{lb}\n-# Page {self.page+1} of {len(self.players) // self.per_page}"
+
+    ar = discord.ui.ActionRow()
+
+    @ar.button(label="Prev", emoji="⬅️", disabled=True)
+    async def previous(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        self.page -= 1
+        if not self.has_page(self.page - 1):
+            button.disabled = True
+        self.next.disabled = False
+        self.draw()
+        await interaction.response.edit_message(view=self.view)
+
+    @ar.button(label="Next", emoji="➡️")
+    async def next(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        self.page += 1
+        if not self.has_page(self.page + 1):
+            button.disabled = True
+        self.previous.disabled = False
+        self.draw()
+        await interaction.response.edit_message(view=self.view)
+
+    @ar.button(label="Jump", emoji="↪️")
+    async def jump(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await interaction.response.send_modal(Jump(self))
+
+    def destroy(self) -> None:
+        self.draw(obscure=True)
+        self.remove_item(self.ar)
+
+
+class TopPaginatorView(discord.ui.LayoutView):
+    message: discord.Message
+
+    def __init__(self, owner: discord.User | discord.Member, players: list[PlayerStats]) -> None:
+        super().__init__()
+        self.owner = owner
+        self.container = TopPaginator(players)
+        self.add_item(self.container)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user != self.owner:
+            await interaction.response.send_message("You can't control this element.", ephemeral=True)
+            return False
+        return True
+
+    async def on_timeout(self):
+        self.container.destroy()
+        await self.message.edit(view=self)
+
+
 class Stats(commands.Cog):
     """Player statistics."""
 
@@ -144,18 +241,15 @@ class Stats(commands.Cog):
         """))
         if r:
             embed.add_field(name="Player blacklisted", value=f"<#{r[0]}>")
-        game_count = f"{n} games" if (n := player.played_in(ALL)) != 1 else "1 game"
+        game_count = f"{n:,} games" if (n := player.played_in(ALL)) != 1 else "1 game"
         embed.set_footer(text=f"Seen in {game_count}")
         await ctx.send(embed=embed)
 
     @commands.command()
     async def top(self, ctx: commands.Context) -> None:
-        n = 25
-        r = []
         players = await self.players(ctx)
-        for i, (name, stats) in enumerate(sorted(players.items(), key=lambda kv: kv[1].ordinal(), reverse=True)[:n], start=1):
-            r.append(f"{i}. {name} - {stats.ordinal():.0f}")
-        await ctx.send(embed=discord.Embed(title=f"Top {n}", description="\n".join(r)))
+        view = TopPaginatorView(ctx.author, sorted(players.values(), key=PlayerStats.ordinal, reverse=True))
+        view.message = await ctx.send(view=view)
 
 
 async def setup(bot: Lookout):
