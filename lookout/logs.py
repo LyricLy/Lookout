@@ -77,13 +77,14 @@ class Gamelogs(commands.Cog):
                 tears.append((attach, "Contains neutrals"))
                 continue
 
-            self.bot.dispatch("game", game)
-            c += 1
-            await self.bot.db.execute(
+            async with self.bot.db.execute(
                 "INSERT INTO Games (gist, from_log, message_count, analysis, analysis_version) VALUES (?, ?, ?, ?, ?)"
                 "ON CONFLICT (gist) DO UPDATE SET from_log = ?2, message_count = ?3, analysis = ?4, analysis_version = ?5 WHERE excluded.message_count > message_count",
                 (gist_of(game), digest, message_count, game, gamelogs.version),
-            )
+            ) as cur:
+                if cur.lastrowid:
+                    self.bot.dispatch("game", game)
+                    c += 1
             await self.bot.db.commit()
 
         return c, tears
