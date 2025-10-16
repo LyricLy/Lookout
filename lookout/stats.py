@@ -45,6 +45,7 @@ ALL = [RoleClass.TOWN, *PURPLE]
 
 @dataclass
 class PlayerStats:
+    account_name: str
     rating: PlackettLuceRating = field(default_factory=model.rating)
     games_won: Counter[RoleClass] = field(default_factory=Counter)
     games_in: Counter[RoleClass] = field(default_factory=Counter)
@@ -79,8 +80,9 @@ class Stats(commands.Cog):
         for player in game.players:
             async with self.bot.db.execute("SELECT dst FROM Aliases WHERE src = ?", (player.account_name,)) as cur:
                 account_name, = (await cur.fetchone()) or (player.account_name,)
-            if account_name not in players:
-                players[account_name] = PlayerStats()
+            key = account_name.casefold()
+            if key not in players:
+                players[key] = PlayerStats(account_name)
 
             # update winrates
             if player.ending_ident.faction == gamelogs.town:
@@ -90,12 +92,12 @@ class Stats(commands.Cog):
             else:
                 c = RoleClass.TT
             if player.won:
-                players[account_name].games_won[c] += 1
-            players[account_name].games_in[c] += 1
+                players[key].games_won[c] += 1
+            players[key].games_in[c] += 1
 
             i = player.ending_ident.faction == gamelogs.coven
-            teams[i].append(account_name)
-            ratings[i].append(players[account_name].rating)
+            teams[i].append(key)
+            ratings[i].append(players[key].rating)
 
         # pad coven
         avg = sum([r.mu for r in ratings[1]]) / len(ratings[1])
@@ -124,7 +126,7 @@ class Stats(commands.Cog):
     @commands.command()
     async def player(self, ctx: commands.Context, *, account_name: str) -> None:
         players = await self.players(ctx)
-        if not (player := players.get(account_name)):
+        if not (player := players.get(account_name.casefold())):
             await ctx.send("I don't know that player.")
             return
         rank = sorted([p.ordinal() for p in players.values()], reverse=True).index(player.ordinal()) + 1
@@ -132,7 +134,7 @@ class Stats(commands.Cog):
         async with self.bot.db.execute("SELECT thread_id FROM Blacklists WHERE account_name = ?", (account_name,)) as cur:
             r = await cur.fetchone()
 
-        embed = discord.Embed(title=account_name, description=f"Rated {player.ordinal():.0f} (#{rank})")
+        embed = discord.Embed(title=player.account_name, description=f"Rated {player.ordinal():.0f} (#{rank})")
         embed.add_field(name="Winrates", value=textwrap.dedent(f"""
         - Overall {player.winrate_in([RoleClass.TOWN, RoleClass.COVEN, RoleClass.TT])}
         - Town {player.winrate_in([RoleClass.TOWN])}
