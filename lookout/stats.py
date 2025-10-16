@@ -37,6 +37,12 @@ class RoleClass(enum.Enum):
     COVEN = 1
     TT = 2
 
+JUST_TOWN = [RoleClass.TOWN]
+JUST_COVEN = [RoleClass.COVEN]
+JUST_TT = [RoleClass.TT]
+PURPLE = [RoleClass.COVEN, RoleClass.TT]
+ALL = [RoleClass.TOWN, *PURPLE]
+
 @dataclass
 class PlayerStats:
     rating: PlackettLuceRating = field(default_factory=model.rating)
@@ -47,7 +53,10 @@ class PlayerStats:
         return self.rating.ordinal(target=1000, alpha=21)
 
     def winrate_in(self, classes: Iterable[RoleClass]) -> str:
-        return show_rate(sum([self.games_won[c] for c in classes]), sum([self.games_in[c] for c in classes]))
+        return show_rate(sum([self.games_won[c] for c in classes]), self.played_in(classes))
+
+    def played_in(self, classes: Iterable[RoleClass]) -> int:
+        return sum([self.games_in[c] for c in classes])
 
 type Players = dict[str, PlayerStats]
 
@@ -133,7 +142,7 @@ class Stats(commands.Cog):
         """))
         if r:
             embed.add_field(name="Player blacklisted", value=f"<#{r[0]}>")
-        game_count = f"{n} games" if (n := sum(player.games_in.values())) != 1 else "1 game"
+        game_count = f"{n} games" if (n := player.played_in(ALL)) != 1 else "1 game"
         embed.set_footer(text=f"Seen in {game_count}")
         await ctx.send(embed=embed)
 
