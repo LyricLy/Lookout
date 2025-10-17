@@ -4,6 +4,7 @@ import logging
 import hashlib
 from typing import TypedDict, Literal
 
+import aiosqlite
 import discord
 import gamelogs
 from discord.ext import commands
@@ -77,14 +78,14 @@ class Gamelogs(commands.Cog):
                 tears.append((attach, "Contains neutrals"))
                 continue
 
-            async with self.bot.db.execute(
-                "INSERT INTO Games (gist, from_log, message_count, analysis, analysis_version) VALUES (?, ?, ?, ?, ?)"
-                "ON CONFLICT (gist) DO UPDATE SET from_log = ?2, message_count = ?3, analysis = ?4, analysis_version = ?5 WHERE excluded.message_count > message_count",
-                (gist_of(game), digest, message_count, game, gamelogs.version),
-            ) as cur:
-                if cur.rowcount > 0:
-                    self.bot.dispatch("game", game)
-                    c += 1
+            row = (gist_of(game), digest, message_count, game, gamelogs.version)
+            try:
+                await self.bot.db.execute("INSERT INTO Games (gist, from_log, message_count, analysis, analysis_version) VALUES (?, ?, ?, ?, ?)", row)
+            except aiosqlite.IntegrityError:
+                await self.bot.db.execute("UPDATE Games SET from_log = ?2, message_count = ?3, analysis = ?4, analysis_version = ?5 WHERE gist = ?1", row)
+            else:
+                self.bot.dispatch("game", game)
+                c += 1
             await self.bot.db.commit()
 
         return c, tears
