@@ -112,7 +112,7 @@ class ResultAnalyzer(Analyzer[None, GameResult]):
                 self.time = n, "day"
                 self.trial_period = False
                 for dc in self.dced:
-                    self.kill(dc)
+                    self.kill(dc, last_night=True)
                 self.dced.clear()
             case NightStart(n):
                 self.time = n, "night"

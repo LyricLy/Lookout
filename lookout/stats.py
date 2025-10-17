@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import enum
 import math
+import logging
 import textwrap
 from collections import Counter
 from contextlib import nullcontext
@@ -14,7 +16,10 @@ from discord.ext import commands
 from openskill.models import PlackettLuce, PlackettLuceRating
 
 from .bot import Lookout
+from .logs import gist_of
 
+
+log = logging.getLogger(__name__)
 
 model = PlackettLuce(limit_sigma=True)
 
@@ -166,9 +171,24 @@ class Stats(commands.Cog):
         self.bot = bot
         self._players: Players | None = None
 
+    async def update_game(self, gist, from_log):
+        async with self.bot.db.execute("SELECT clean_content FROM Gamelogs WHERE hash = ?", (from_log,)) as cur:
+            content, = await cur.fetchone()  # type: ignore
+        try:
+            game, message_count = gamelogs.parse(content, gamelogs.ResultAnalyzer() & gamelogs.MessageCountAnalyzer(), clean_tags=False)
+        except gamelogs.BadLogError:
+            log.exception("failed to update game from log %s", from_log)
+        else:
+            assert gist_of(game) == gist
+            await self.bot.db.execute("UPDATE Games SET analysis = ?, message_count = ?, analysis_version = ? WHERE gist = ?", (game, message_count, gamelogs.version, gist))
+            await self.bot.db.commit()
+            log.info("updated game from log %s to version %d", from_log, gamelogs.version)
+
     async def games(self) -> AsyncIterator[gamelogs.GameResult]:
-        async with self.bot.db.execute("SELECT analysis FROM Games") as cur:
-            async for game, in cur:
+        async with self.bot.db.execute("SELECT gist, analysis, analysis_version, from_log FROM Games") as cur:
+            async for gist, game, version, from_log in cur:
+                if version < gamelogs.version:
+                    asyncio.create_task(self.update_game(gist, from_log))
                 yield game
 
     async def run_game(self, players: Players, game: gamelogs.GameResult) -> None:

@@ -176,3 +176,6 @@ class GameResult:
     modifiers: list[str] = _field(compare=False)
     vip: Player | None = _field(compare=False)
     ended: Time
+
+    def __str__(self):
+        return "\n".join(map(str, self.players))
