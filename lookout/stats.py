@@ -251,7 +251,7 @@ class Stats(commands.Cog):
         async with self.bot.db.execute("SELECT thread_id FROM Blacklists WHERE account_name = ?", (account_name,)) as cur:
             r = await cur.fetchone()
 
-        embed = discord.Embed(title=player.account_name, description=f"Rated {player.ordinal():.0f} (#{rank})")
+        embed = discord.Embed(title=player.account_name, description=f"Rated {player.ordinal():.0f} (#{rank:,})")
         embed.add_field(name="Winrates", value=textwrap.dedent(f"""
         - Overall {player.winrate_in([RoleClass.TOWN, RoleClass.COVEN, RoleClass.TT])}
         - Town {player.winrate_in([RoleClass.TOWN])}
