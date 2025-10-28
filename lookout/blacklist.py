@@ -57,6 +57,7 @@ class Blacklist(commands.Cog):
 
     @commands.Cog.listener()
     async def on_thread_create(self, thread: discord.Thread) -> None:
+        await asyncio.sleep(1)
         await self.check_thread(thread)
 
         async with self.bot.db.execute("SELECT EXISTS(SELECT 1 FROM BlacklistGames WHERE thread_id = ?)", (thread.id,)) as cur:
