@@ -8,7 +8,7 @@ import textwrap
 from collections import Counter
 from contextlib import nullcontext
 from dataclasses import dataclass, field
-from typing import AsyncIterator, Iterable
+from typing import AsyncIterator, Iterable, NamedTuple
 
 import discord
 import gamelogs
@@ -41,12 +41,16 @@ class RoleClass(enum.Enum):
     TOWN = 0
     COVEN = 1
     TT = 2
+    TOWN_HUNT = 3
+    TT_HUNT = 4
 
-JUST_TOWN = [RoleClass.TOWN]
-JUST_COVEN = [RoleClass.COVEN]
-JUST_TT = [RoleClass.TT]
-PURPLE = [RoleClass.COVEN, RoleClass.TT]
-ALL = [RoleClass.TOWN, *PURPLE]
+TOWN = [RoleClass.TOWN, RoleClass.TOWN_HUNT]
+TOWN_HUNT = [RoleClass.TOWN_HUNT]
+COVEN = [RoleClass.COVEN]
+TT = [RoleClass.TT, RoleClass.TT_HUNT]
+TT_HUNT = [RoleClass.TT_HUNT]
+PURPLE = COVEN + TT
+ALL = TOWN + PURPLE
 
 @dataclass
 class PlayerStats:
@@ -202,12 +206,13 @@ class Stats(commands.Cog):
                 players[key] = PlayerStats(account_name)
 
             # update winrates
+            saw_hunt = game.hunt_reached and (not player.died or player.died >= (game.hunt_reached, "day"))
             if player.ending_ident.faction == gamelogs.town:
-                c = RoleClass.TOWN
+                c = RoleClass.TOWN_HUNT if saw_hunt else RoleClass.TOWN
             elif player.ending_ident.role.default_faction == gamelogs.coven:
                 c = RoleClass.COVEN
             else:
-                c = RoleClass.TT
+                c = RoleClass.TT_HUNT if saw_hunt else RoleClass.TT
             if player.won:
                 players[key].games_won[c] += 1
             players[key].games_in[c] += 1
@@ -253,11 +258,15 @@ class Stats(commands.Cog):
 
         embed = discord.Embed(title=player.account_name, description=f"Rated {player.ordinal():.0f} (#{rank:,})")
         embed.add_field(name="Winrates", value=textwrap.dedent(f"""
-        - Overall {player.winrate_in([RoleClass.TOWN, RoleClass.COVEN, RoleClass.TT])}
-        - Town {player.winrate_in([RoleClass.TOWN])}
-        - Purple {player.winrate_in([RoleClass.COVEN, RoleClass.TT])}
-          - Coven {player.winrate_in([RoleClass.COVEN])}
-          - TT {player.winrate_in([RoleClass.TT])}
+        - Overall {player.winrate_in(ALL)}
+        - Town {player.winrate_in(TOWN)}
+        - Purple {player.winrate_in(PURPLE)}
+          - Coven {player.winrate_in(COVEN)}
+          - TT {player.winrate_in(TT)}
+        """))
+        embed.add_field(name="Winrates in hunt", value=textwrap.dedent(f"""
+        - Town {player.winrate_in(TOWN_HUNT)}
+        - TT {player.winrate_in(TT_HUNT)}
         """))
         if r:
             embed.add_field(name="Player blacklisted", value=f"<#{r[0]}>")
