@@ -8,7 +8,7 @@ import textwrap
 from collections import Counter
 from contextlib import nullcontext
 from dataclasses import dataclass, field
-from typing import AsyncIterator, Iterable, NamedTuple
+from typing import AsyncIterator, Iterable
 
 import discord
 import gamelogs
