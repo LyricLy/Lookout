@@ -23,19 +23,65 @@ log = logging.getLogger(__name__)
 
 model = PlackettLuce(limit_sigma=True)
 
-def cut_up(s: int, n: int) -> tuple[float, float]:
-    z = 3
-    avg = s / n
-    divisor = 1 + z*z / n
-    return (avg + (z*z/(2*n))) / divisor, z/(2*n) * math.sqrt(4 * n * avg * (1-avg) + z*z) / divisor
 
-def show_rate(s: int, n: int) -> str:
-    try:
-        centre, plus_or_minus = cut_up(s, n)
-    except ZeroDivisionError:
-        return "N/A (no games)"
-    else:
-        return f"{centre*100:.2f}% ± {plus_or_minus*100:.2f}%"
+@dataclass
+class Winrate:
+    s: int
+    n: int
+
+    def interval(self) -> tuple[float, float]:
+        z = 3
+        s = self.s
+        n = self.n
+        avg = s / n
+        divisor = 1 + z*z / n
+        return (avg + (z*z/(2*n))) / divisor, z/(2*n) * math.sqrt(4 * n * avg * (1-avg) + z*z) / divisor
+
+    def centre(self) -> float:
+        return self.interval()[0]
+
+    def lower_bound(self) -> float:
+        centre, radius = self.interval()
+        return centre - radius
+
+    def upper_bound(self) -> float:
+        centre, radius = self.interval()
+        return centre + radius
+
+    def _ord_key(self) -> float:
+        try:
+            return self.lower_bound()
+        except ZeroDivisionError:
+            return float("-inf")
+
+    def __str__(self) -> str:
+        try:
+            centre, radius = self.interval()
+        except ZeroDivisionError:
+            return "N/A (no games)"
+        else:
+            return f"{centre*100:.2f}% ± {radius*100:.2f}%"
+
+    def __lt__(self, other: Winrate) -> bool:
+        if not isinstance(other, Winrate):
+            return NotImplemented
+        return self._ord_key() < other._ord_key()
+
+    def __le__(self, other: Winrate) -> bool:
+        if not isinstance(other, Winrate):
+            return NotImplemented
+        return self._ord_key() <= other._ord_key()
+
+    def __gt__(self, other: Winrate) -> bool:
+        if not isinstance(other, Winrate):
+            return NotImplemented
+        return self._ord_key() > other._ord_key()
+
+    def __ge__(self, other: Winrate) -> bool:
+        if not isinstance(other, Winrate):
+            return NotImplemented
+        return self._ord_key() >= other._ord_key()
+
 
 class RoleClass(enum.Enum):
     TOWN = 0
@@ -44,13 +90,15 @@ class RoleClass(enum.Enum):
     TOWN_HUNT = 3
     TT_HUNT = 4
 
-TOWN = [RoleClass.TOWN, RoleClass.TOWN_HUNT]
-TOWN_HUNT = [RoleClass.TOWN_HUNT]
-COVEN = [RoleClass.COVEN]
-TT = [RoleClass.TT, RoleClass.TT_HUNT]
-TT_HUNT = [RoleClass.TT_HUNT]
-PURPLE = COVEN + TT
-ALL = TOWN + PURPLE
+class Part(enum.Enum):
+    TOWN = [RoleClass.TOWN, RoleClass.TOWN_HUNT]
+    TOWN_HUNT = [RoleClass.TOWN_HUNT]
+    COVEN = [RoleClass.COVEN]
+    TT = [RoleClass.TT, RoleClass.TT_HUNT]
+    TT_HUNT = [RoleClass.TT_HUNT]
+    PURPLE = COVEN + TT
+    ALL = TOWN + PURPLE
+
 
 @dataclass
 class PlayerStats:
@@ -62,11 +110,11 @@ class PlayerStats:
     def ordinal(self) -> float:
         return self.rating.ordinal(target=1000, alpha=21)
 
-    def winrate_in(self, classes: Iterable[RoleClass]) -> str:
-        return show_rate(sum([self.games_won[c] for c in classes]), self.played_in(classes))
+    def winrate_in(self, classes: Part) -> Winrate:
+        return Winrate(sum([self.games_won[c] for c in classes.value]), self.played_in(classes))
 
-    def played_in(self, classes: Iterable[RoleClass]) -> int:
-        return sum([self.games_in[c] for c in classes])
+    def played_in(self, classes: Part) -> int:
+        return sum([self.games_in[c] for c in classes.value])
 
 type Players = dict[str, PlayerStats]
 
@@ -101,23 +149,49 @@ class Jump(discord.ui.Modal):
 
 
 class TopPaginator(discord.ui.Container):
-    header = discord.ui.TextDisplay("# Leaderboard")
     display = discord.ui.TextDisplay("")
 
-    def __init__(self, players: list[PlayerStats]) -> None:
+    def __init__(self, players: Iterable[PlayerStats], part: Part | None) -> None:
         super().__init__(accent_colour=discord.Colour(0x6bfc03))
-        self.players = players
+        self.part = part
+        self.players = sorted(players, key=self.key, reverse=True)
         self.per_page = 15
         self.page = 0
         self.draw()
+
+    def key(self, player: PlayerStats) -> Winrate | float:
+        return player.winrate_in(self.part) if self.part is not None else player.ordinal()
+
+    def key_desc(self) -> str:
+        match self.part:
+            case Part.TOWN:
+                n = "Town winrate"
+            case Part.PURPLE:
+                n = "purple winrate"
+            case Part.COVEN:
+                n = "Coven winrate"
+            case Part.TT:
+                n = "TT winrate"
+            case Part.TOWN_HUNT:
+                n = "Town winrate in hunt"
+            case Part.TT_HUNT:
+                n = "TT winrate in hunt (data is scarce)"
+            case Part.ALL:
+                n = "overall winrate"
+            case _:
+                return ""
+        return f"Sorting by {n}. Confidence intervals are ordered by lower bound, not the centre."
+
+    def show_key(self, player: PlayerStats) -> str:
+        return str(player.winrate_in(self.part)) if self.part is not None else f"{player.ordinal():.0f}"
 
     def has_page(self, num: int) -> bool:
         return 0 <= num*self.per_page < len(self.players)
 
     def draw(self, *, obscure: bool = False) -> None:
         start = self.page*self.per_page
-        lb = "\n".join([f"{start+1}. {('\u200b'*obscure).join(player.account_name)} - {player.ordinal():.0f}" for player in self.players[start:start+self.per_page]])
-        self.display.content = f"{lb}\n-# Page {self.page+1} of {len(self.players) // self.per_page}"
+        lb = "\n".join([f"{start+1}. {('\u200b'*obscure).join(player.account_name)} - {self.key(player)}" for player in self.players[start:start+self.per_page]])
+        self.display.content = f"# Leaderboard\n{self.key_desc()}\n{lb}\n-# Page {self.page+1} of {len(self.players) // self.per_page}"
 
     ar = discord.ui.ActionRow()
 
@@ -151,10 +225,10 @@ class TopPaginator(discord.ui.Container):
 class TopPaginatorView(discord.ui.LayoutView):
     message: discord.Message
 
-    def __init__(self, owner: discord.User | discord.Member, players: list[PlayerStats]) -> None:
+    def __init__(self, owner: discord.User | discord.Member, players: Iterable[PlayerStats], part: Part | None) -> None:
         super().__init__()
         self.owner = owner
-        self.container = TopPaginator(players)
+        self.container = TopPaginator(players, part)
         self.add_item(self.container)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -258,26 +332,39 @@ class Stats(commands.Cog):
 
         embed = discord.Embed(title=player.account_name, description=f"Rated {player.ordinal():.0f} (#{rank:,})")
         embed.add_field(name="Winrates", value=textwrap.dedent(f"""
-        - Overall {player.winrate_in(ALL)}
-        - Town {player.winrate_in(TOWN)}
-        - Purple {player.winrate_in(PURPLE)}
-          - Coven {player.winrate_in(COVEN)}
-          - TT {player.winrate_in(TT)}
+        - Overall {player.winrate_in(Part.ALL)}
+        - Town {player.winrate_in(Part.TOWN)}
+        - Purple {player.winrate_in(Part.PURPLE)}
+          - Coven {player.winrate_in(Part.COVEN)}
+          - TT {player.winrate_in(Part.TT)}
         """))
         embed.add_field(name="Winrates in hunt", value=textwrap.dedent(f"""
-        - Town {player.winrate_in(TOWN_HUNT)}
-        - TT {player.winrate_in(TT_HUNT)}
+        - Town {player.winrate_in(Part.TOWN_HUNT)}
+        - TT {player.winrate_in(Part.TT_HUNT)}
         """))
         if r:
             embed.add_field(name="Player blacklisted", value=f"<#{r[0]}>")
-        game_count = f"{n:,} games" if (n := player.played_in(ALL)) != 1 else "1 game"
+        game_count = f"{n:,} games" if (n := player.played_in(Part.ALL)) != 1 else "1 game"
         embed.set_footer(text=f"Seen in {game_count}")
         await ctx.send(embed=embed)
 
     @commands.command()
-    async def top(self, ctx: commands.Context) -> None:
+    async def top(self, ctx: commands.Context, *, criterion: str = "rating") -> None:
         players = await self.players(ctx)
-        view = TopPaginatorView(ctx.author, sorted(players.values(), key=PlayerStats.ordinal, reverse=True))
+
+        criterion = criterion.casefold()
+        if "hunt" in criterion:
+            part = Part.TOWN_HUNT if "town" in criterion or "green" in criterion else Part.TT_HUNT
+        else:
+            part = {
+                "overall": Part.ALL,
+                "town": Part.TOWN,
+                "green": Part.TOWN,
+                "purple": Part.PURPLE,
+                "coven": Part.COVEN,
+                "tt": Part.TT,
+            }.get(criterion)
+        view = TopPaginatorView(ctx.author, players.values(), part)
         view.message = await ctx.send(view=view)
 
 
