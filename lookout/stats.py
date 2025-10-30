@@ -123,7 +123,7 @@ class PlayerStats:
 
     @classmethod
     async def convert(cls, ctx: commands.Context, argument: str) -> PlayerStats:
-        players = await ctx.bot.get_cog("Stats").players()
+        players = await ctx.bot.get_cog("Stats").players(ctx)
         async with ctx.bot.db.execute("SELECT player FROM Names WHERE name = ?", (argument,)) as cur:
             r = await cur.fetchone()
         if not r:
@@ -405,6 +405,7 @@ class Stats(commands.Cog):
     async def _is(self, ctx: commands.Context, who: discord.Member, *, player: PlayerStats) -> None:
         await self.bot.db.execute("INSERT OR REPLACE INTO DiscordConnections (discord_id, player) VALUES (?, ?)", (who.id, player.id))
         await self.bot.db.commit()
+        await ctx.send(":+1:")
 
 
 async def setup(bot: Lookout):
