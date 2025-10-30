@@ -109,9 +109,6 @@ class PlayerStats:
     games_won: Counter[RoleClass] = field(default_factory=Counter)
     games_in: Counter[RoleClass] = field(default_factory=Counter)
 
-    def default_name(self) -> str:
-        return f"<@{self.member}>" if self.member else self.names[0]
-
     def ordinal(self) -> float:
         return self.rating.ordinal(target=1000, alpha=21)
 
@@ -214,7 +211,7 @@ class TopPaginator(discord.ui.Container):
 
     def draw(self, *, obscure: bool = False) -> None:
         start = self.page*self.per_page
-        lb = "\n".join([f"{start+1}. {('\u200b'*obscure).join(player.default_name())} - {self.show_key(player)}" for player in self.players[start:start+self.per_page]])
+        lb = "\n".join([f"{start+1}. {f'<@{player.member}>' if player.member else ('\u200b'*obscure).join(player.names[0])} - {self.show_key(player)}" for player in self.players[start:start+self.per_page]])
         self.display.content = f"# Leaderboard\n{self.key_desc()}\n{lb}\n-# Page {self.page+1} of {len(self.players) // self.per_page}"
 
     ar = discord.ui.ActionRow()
@@ -402,9 +399,19 @@ class Stats(commands.Cog):
 
     @commands.command(name="is")
     @commands.is_owner()
-    async def _is(self, ctx: commands.Context, who: discord.Member, *, player: PlayerStats) -> None:
+    async def _is(self, ctx: commands.Context, a: PlayerStats, b: PlayerStats) -> None:
+        await self.bot.db.execute("UPDATE DiscordConnections SET player = ? WHERE player = ?", (a.id, b.id))
+        await self.bot.db.execute("UPDATE Names SET player = ? WHERE player = ?", (a.id, b.id))
+        await self.bot.db.commit()
+        self._players = None
+        await ctx.send(":+1:")
+
+    @commands.command()
+    @commands.is_owner()
+    async def connect(self, ctx: commands.Context, who: discord.Member, *, player: PlayerStats) -> None:
         await self.bot.db.execute("INSERT OR REPLACE INTO DiscordConnections (discord_id, player) VALUES (?, ?)", (who.id, player.id))
         await self.bot.db.commit()
+        player.member = who.id
         await ctx.send(":+1:")
 
 
