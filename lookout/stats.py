@@ -8,7 +8,7 @@ import textwrap
 from collections import Counter
 from contextlib import nullcontext
 from dataclasses import dataclass, field
-from typing import AsyncIterator, Iterable
+from typing import AsyncIterator, Iterable, Literal
 
 import discord
 import gamelogs
@@ -138,6 +138,7 @@ class PlayerStats:
         return players[r[0]]
 
 type Players = dict[int, PlayerStats]
+type Criterion = Part | Literal["rating", "played"]
 
 
 class Jump(discord.ui.Modal):
@@ -172,16 +173,21 @@ class Jump(discord.ui.Modal):
 class TopPaginator(discord.ui.Container):
     display = discord.ui.TextDisplay("")
 
-    def __init__(self, players: Iterable[PlayerStats], part: Part | None) -> None:
+    def __init__(self, players: Iterable[PlayerStats], part: Criterion) -> None:
         super().__init__(accent_colour=discord.Colour(0x6bfc03))
-        self.part = part
+        self.part: Criterion = part
         self.players = sorted(players, key=self.key, reverse=True)
         self.per_page = 15
         self.page = 0
         self.draw()
 
     def key(self, player: PlayerStats) -> Winrate | float:
-        return player.winrate_in(self.part) if self.part is not None else player.ordinal()
+        if self.part == "rating":
+            return player.ordinal()
+        elif self.part == "played":
+            return player.played_in(Part.ALL)
+        else:
+            return player.winrate_in(self.part)
 
     def key_desc(self) -> str:
         match self.part:
@@ -199,12 +205,20 @@ class TopPaginator(discord.ui.Container):
                 n = "TT winrate in hunt (data is scarce)"
             case Part.ALL:
                 n = "overall winrate"
+            case "played":
+                return "Sorting by number of games played."
             case _:
                 return ""
         return f"Sorting by {n}. Confidence intervals are ordered by lower bound, not the centre."
 
     def show_key(self, player: PlayerStats) -> str:
-        return str(player.winrate_in(self.part)) if self.part is not None else f"{player.ordinal():.0f}"
+        k = self.key(player)
+        if self.part == "rating":
+            return f"{k:.0f}"
+        elif self.part == "played":
+            return f"{k:,}"
+        else:
+            return f"{k}"
 
     def has_page(self, num: int) -> bool:
         return 0 <= num*self.per_page < len(self.players)
@@ -246,7 +260,7 @@ class TopPaginator(discord.ui.Container):
 class TopPaginatorView(discord.ui.LayoutView):
     message: discord.Message
 
-    def __init__(self, owner: discord.User | discord.Member, players: Iterable[PlayerStats], part: Part | None) -> None:
+    def __init__(self, owner: discord.User | discord.Member, players: Iterable[PlayerStats], part: Criterion) -> None:
         super().__init__()
         self.owner = owner
         self.container = TopPaginator(players, part)
@@ -378,7 +392,7 @@ class Stats(commands.Cog):
         embed.set_footer(text=f"Seen in {game_count}")
         await ctx.send(embed=embed)
 
-    @commands.command()
+    @commands.command(aliases=["lb", "leaderboard", "players"])
     async def top(self, ctx: commands.Context, *, criterion: str = "rating") -> None:
         players = await self.players(ctx)
 
@@ -387,13 +401,15 @@ class Stats(commands.Cog):
             part = Part.TOWN_HUNT if "town" in criterion or "green" in criterion else Part.TT_HUNT
         else:
             part = {
+                "winrate": Part.ALL,
                 "overall": Part.ALL,
                 "town": Part.TOWN,
                 "green": Part.TOWN,
                 "purple": Part.PURPLE,
                 "coven": Part.COVEN,
                 "tt": Part.TT,
-            }.get(criterion)
+                "played": "played",
+            }.get(criterion, "rating")
         view = TopPaginatorView(ctx.author, players.values(), part)
         view.message = await ctx.send(view=view)
 
