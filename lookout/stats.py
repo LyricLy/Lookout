@@ -102,10 +102,15 @@ class Part(enum.Enum):
 
 @dataclass
 class PlayerStats:
-    account_name: str
+    id: int
+    names: list[str]
+    member: int | None
     rating: PlackettLuceRating = field(default_factory=model.rating)
     games_won: Counter[RoleClass] = field(default_factory=Counter)
     games_in: Counter[RoleClass] = field(default_factory=Counter)
+
+    def default_name(self) -> str:
+        return f"<@{self.member}>" if self.member else self.names[0]
 
     def ordinal(self) -> float:
         return self.rating.ordinal(target=1000, alpha=21)
@@ -116,7 +121,26 @@ class PlayerStats:
     def played_in(self, classes: Part) -> int:
         return sum([self.games_in[c] for c in classes.value])
 
-type Players = dict[str, PlayerStats]
+    @classmethod
+    async def convert(cls, ctx: commands.Context, argument: str) -> PlayerStats:
+        players = await ctx.bot.get_cog("Stats").players()
+        async with ctx.bot.db.execute("SELECT player FROM Names WHERE name = ?", (argument,)) as cur:
+            r = await cur.fetchone()
+        if not r:
+            try:
+                member = await commands.MemberConverter().convert(ctx, argument)
+            except commands.MemberNotFound:
+                await ctx.send("I don't know that player.")
+                raise commands.BadArgument()
+            else:
+                async with ctx.bot.db.execute("SELECT player FROM DiscordConnections WHERE discord_id = ?", (member.id,)) as cur:
+                    r = await cur.fetchone()
+                if not r:
+                    await ctx.send(f"I don't know what {member.mention}'s ToS2 account is.")
+                    raise commands.BadArgument()
+        return players[r[0]]
+
+type Players = dict[int, PlayerStats]
 
 
 class Jump(discord.ui.Modal):
@@ -133,7 +157,7 @@ class Jump(discord.ui.Modal):
             page = int(t) - 1
         except ValueError:
             for idx, player in enumerate(self.container.players):
-                if player.account_name.casefold() == t.casefold():
+                if any([name.casefold() == t.casefold() for name in player.names]):
                     break
             else:
                 await interaction.response.send_message(f"I don't know a player called '{t}'.", ephemeral=True)
@@ -190,7 +214,7 @@ class TopPaginator(discord.ui.Container):
 
     def draw(self, *, obscure: bool = False) -> None:
         start = self.page*self.per_page
-        lb = "\n".join([f"{start+1}. {('\u200b'*obscure).join(player.account_name)} - {self.key(player)}" for player in self.players[start:start+self.per_page]])
+        lb = "\n".join([f"{start+1}. {('\u200b'*obscure).join(player.default_name())} - {self.show_key(player)}" for player in self.players[start:start+self.per_page]])
         self.display.content = f"# Leaderboard\n{self.key_desc()}\n{lb}\n-# Page {self.page+1} of {len(self.players) // self.per_page}"
 
     ar = discord.ui.ActionRow()
@@ -273,11 +297,17 @@ class Stats(commands.Cog):
         teams = [[], []]
         ratings = [[], []]
         for player in game.players:
-            async with self.bot.db.execute("SELECT dst FROM Aliases WHERE src = ?", (player.account_name,)) as cur:
-                account_name, = (await cur.fetchone()) or (player.account_name,)
-            key = account_name.casefold()
+            await self.bot.db.execute("INSERT OR IGNORE INTO Names VALUES (?, (SELECT COALESCE(MAX(player), 0) + 1 FROM Names))", (player.account_name,))
+
+            async with self.bot.db.execute("SELECT player FROM Names WHERE name = ?", (player.account_name,)) as cur:
+                key, = await cur.fetchone()  # type: ignore
+            async with self.bot.db.execute("SELECT name FROM Names WHERE player = ? ORDER BY LENGTH(name), name", (key,)) as cur:
+                names = [name for name, in await cur.fetchall()]
+            async with self.bot.db.execute("SELECT discord_id FROM DiscordConnections WHERE player = ?", (key,)) as cur:
+                member = await cur.fetchone()
+
             if key not in players:
-                players[key] = PlayerStats(account_name)
+                players[key] = PlayerStats(key, names, member[0] if member else None)
 
             # update winrates
             saw_hunt = game.hunt_reached and (not player.died or player.died >= (game.hunt_reached, "day"))
@@ -320,17 +350,20 @@ class Stats(commands.Cog):
         return r
 
     @commands.command()
-    async def player(self, ctx: commands.Context, *, account_name: str) -> None:
-        players = await self.players(ctx)
-        if not (player := players.get(account_name.casefold())):
-            await ctx.send("I don't know that player.")
-            return
+    async def player(self, ctx: commands.Context, *, player: PlayerStats) -> None:
+        players = await self.players()
         rank = sorted([p.ordinal() for p in players.values()], reverse=True).index(player.ordinal()) + 1
 
-        async with self.bot.db.execute("SELECT thread_id FROM Blacklists WHERE account_name = ?", (account_name,)) as cur:
-            r = await cur.fetchone()
+        r = None
+        for name in player.names:
+            async with self.bot.db.execute("SELECT thread_id FROM Blacklists WHERE account_name = ?", (name,)) as cur:
+                r = await cur.fetchone()
+            if r:
+                break
 
-        embed = discord.Embed(title=player.account_name, description=f"Rated {player.ordinal():.0f} (#{rank:,})")
+        names = ", ".join(player.names)
+        title = f"<@{player.member}> ({names})" if player.member else names
+        embed = discord.Embed(description=f"### {title}\nRated {player.ordinal():.0f} (#{rank:,})")
         embed.add_field(name="Winrates", value=textwrap.dedent(f"""
         - Overall {player.winrate_in(Part.ALL)}
         - Town {player.winrate_in(Part.TOWN)}
@@ -366,6 +399,12 @@ class Stats(commands.Cog):
             }.get(criterion)
         view = TopPaginatorView(ctx.author, players.values(), part)
         view.message = await ctx.send(view=view)
+
+    @commands.command(name="is")
+    @commands.is_owner()
+    async def _is(self, ctx: commands.Context, who: discord.Member, *, player: PlayerStats) -> None:
+        await self.bot.db.execute("INSERT OR REPLACE INTO DiscordConnections (discord_id, player) VALUES (?, ?)", (who.id, player.id))
+        await self.bot.db.commit()
 
 
 async def setup(bot: Lookout):

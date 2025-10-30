@@ -23,14 +23,14 @@ class Lookout(commands.Bot):
         super().__init__(
             command_prefix="lo!",
             description="Official bot of the TT server, by LyricLy",
-            allowed_mentions=discord.AllowedMentions(everyone=False, roles=False),
+            allowed_mentions=discord.AllowedMentions.none(),
             intents=discord.Intents(
                 guilds=True,
                 messages=True,
                 members=True,
                 message_content=True,
             ),
-            max_messages=None,
+            max_messages=None,  # type: ignore
         )
 
     async def on_command_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
