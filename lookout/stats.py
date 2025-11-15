@@ -60,7 +60,7 @@ class Winrate:
         except ZeroDivisionError:
             return "N/A (no games)"
         else:
-            return f"{centre*100:.2f}% ± {radius*100:.2f}%"
+            return f"{centre*100:.2f}% ± {radius*100:.2f}% ({self.s}/{self.n})"
 
     def __lt__(self, other: Winrate) -> bool:
         if not isinstance(other, Winrate):
