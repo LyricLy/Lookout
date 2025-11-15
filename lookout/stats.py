@@ -160,12 +160,12 @@ class Jump(discord.ui.Modal):
             else:
                 await interaction.response.send_message(f"I don't know a player called '{t}'.", ephemeral=True)
                 return
-            self.container.page = idx // self.container.per_page
+            self.container.go_to_page(idx // self.container.per_page)
         else:
             if not self.container.has_page(page):
                 await interaction.response.send_message(f"Page number {page} is out of bounds.", ephemeral=True)
                 return
-            self.container.page = page
+            self.container.go_to_page(page)
         self.container.draw()
         await interaction.response.edit_message(view=self.container.view)
 
@@ -228,23 +228,22 @@ class TopPaginator(discord.ui.Container):
         lb = "\n".join([f"{start+1}. {f'<@{player.member}>' if player.member else ('\u200b'*obscure).join(player.names[0])} - {self.show_key(player)}" for player in self.players[start:start+self.per_page]])
         self.display.content = f"# Leaderboard\n{self.key_desc()}\n{lb}\n-# Page {self.page+1} of {len(self.players) // self.per_page}"
 
+    def go_to_page(self, num: int) -> None:
+        self.page = num
+        self.previous.disabled = not self.has_page(num - 1)
+        self.next.disabled = not self.has_page(num + 1)
+
     ar = discord.ui.ActionRow()
 
     @ar.button(label="Prev", emoji="⬅️", disabled=True)
     async def previous(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        self.page -= 1
-        if not self.has_page(self.page - 1):
-            button.disabled = True
-        self.next.disabled = False
+        self.go_to_page(self.page - 1)
         self.draw()
         await interaction.response.edit_message(view=self.view)
 
     @ar.button(label="Next", emoji="➡️")
     async def next(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        self.page += 1
-        if not self.has_page(self.page + 1):
-            button.disabled = True
-        self.previous.disabled = False
+        self.go_to_page(self.page + 1)
         self.draw()
         await interaction.response.edit_message(view=self.view)
 
