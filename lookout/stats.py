@@ -99,12 +99,12 @@ class Part(enum.Enum):
     PURPLE = COVEN + TT
     ALL = TOWN + PURPLE
 
-
 @dataclass
 class PlayerStats:
     id: int
     names: list[str]
     member: int | None
+    hidden: bool
     rating: PlackettLuceRating = field(default_factory=model.rating)
     games_won: Counter[RoleClass] = field(default_factory=Counter)
     games_in: Counter[RoleClass] = field(default_factory=Counter)
@@ -311,13 +311,16 @@ class Stats(commands.Cog):
 
             async with self.bot.db.execute("SELECT player FROM Names WHERE name = ?", (player.account_name,)) as cur:
                 key, = await cur.fetchone()  # type: ignore
-            async with self.bot.db.execute("SELECT name FROM Names WHERE player = ? ORDER BY LENGTH(name), name", (key,)) as cur:
-                names = [name for name, in await cur.fetchall()]
-            async with self.bot.db.execute("SELECT discord_id FROM DiscordConnections WHERE player = ?", (key,)) as cur:
-                member = await cur.fetchone()
 
             if key not in players:
-                players[key] = PlayerStats(key, names, member[0] if member else None)
+                async with self.bot.db.execute("SELECT name FROM Names WHERE player = ? ORDER BY LENGTH(name), name", (key,)) as cur:
+                    names = [name for name, in await cur.fetchall()]
+                async with self.bot.db.execute("SELECT discord_id FROM DiscordConnections WHERE player = ?", (key,)) as cur:
+                    member = await cur.fetchone()
+                async with self.bot.db.execute("SELECT EXISTS(SELECT 1 FROM Hidden WHERE player = ?)", (key,)) as cur:
+                    hidden, = await cur.fetchone()  # type: ignore
+
+                players[key] = PlayerStats(key, names, member[0] if member else None, hidden)
 
             # update winrates
             saw_hunt = game.hunt_reached and (not player.died or player.died >= (game.hunt_reached, "day"))
@@ -373,20 +376,23 @@ class Stats(commands.Cog):
 
         names = ", ".join(player.names)
         title = f"<@{player.member}> ({names})" if player.member else names
-        embed = discord.Embed(description=f"### {title}\nRated {player.ordinal():.0f} (#{rank:,})")
-        embed.add_field(name="Winrates", value=textwrap.dedent(f"""
-        - Overall {player.winrate_in(Part.ALL)}
-        - Town {player.winrate_in(Part.TOWN)}
-        - Purple {player.winrate_in(Part.PURPLE)}
-          - Coven {player.winrate_in(Part.COVEN)}
-          - TT {player.winrate_in(Part.TT)}
-        """))
-        embed.add_field(name="Winrates in hunt", value=textwrap.dedent(f"""
-        - Town {player.winrate_in(Part.TOWN_HUNT)}
-        - TT {player.winrate_in(Part.TT_HUNT)}
-        """))
+        if player.hidden:
+            embed = discord.Embed(description=f"### {title}\nThis player has chosen to hide their profile.")
+        else:
+            embed = discord.Embed(description=f"### {title}\nRated {player.ordinal():.0f} (#{rank:,})")
+            embed.add_field(name="Winrates", value=textwrap.dedent(f"""
+            - Overall {player.winrate_in(Part.ALL)}
+            - Town {player.winrate_in(Part.TOWN)}
+            - Purple {player.winrate_in(Part.PURPLE)}
+              - Coven {player.winrate_in(Part.COVEN)}
+              - TT {player.winrate_in(Part.TT)}
+            """))
+            embed.add_field(name="Winrates in hunt", value=textwrap.dedent(f"""
+            - Town {player.winrate_in(Part.TOWN_HUNT)}
+            - TT {player.winrate_in(Part.TT_HUNT)}
+            """))
         if r:
-            embed.add_field(name="Player blacklisted", value=f"<#{r[0]}>")
+            embed.add_field(name="Player blacklisted", value=f"<#{r[0]}>", inline=False)
         game_count = f"{n:,} games" if (n := player.played_in(Part.ALL)) != 1 else "1 game"
         embed.set_footer(text=f"Seen in {game_count}")
         await ctx.send(embed=embed)
@@ -409,8 +415,33 @@ class Stats(commands.Cog):
                 "tt": Part.TT,
                 "played": "played",
             }.get(criterion, "rating")
-        view = TopPaginatorView(ctx.author, players.values(), part)
+        view = TopPaginatorView(ctx.author, (p for p in players.values() if not p.hidden), part)
         view.message = await ctx.send(view=view)
+
+    @commands.command()
+    async def hide(self, ctx: commands.Context) -> None:
+        async with self.bot.db.execute("INSERT OR REPLACE INTO Hidden (player) SELECT player FROM DiscordConnections WHERE discord_id = ? RETURNING player", (ctx.author.id,)) as cur:
+            r = await cur.fetchone()
+        if not r:
+            await ctx.send("Sorry, I don't know who you are.")
+            return
+        await self.bot.db.commit()
+        if self._players:
+            self._players[r[0]].hidden = True
+        await ctx.send(":+1:")
+
+    @commands.command()
+    async def show(self, ctx: commands.Context) -> None:
+        async with self.bot.db.execute("SELECT player FROM DiscordConnections WHERE discord_id = ?", (ctx.author.id,)) as cur:
+            r = await cur.fetchone()
+        if not r:
+            await ctx.send("Sorry, I don't know who you are.")
+            return
+        await self.bot.db.execute("DELETE FROM Hidden WHERE player = ?", (r[0],))
+        await self.bot.db.commit()
+        if self._players:
+            self._players[r[0]].hidden = False
+        await ctx.send(":+1:")
 
     @commands.command(name="is")
     @commands.is_owner()

@@ -1,0 +1,3 @@
+CREATE TABLE Hidden (
+    player INTEGER PRIMARY KEY
+);
