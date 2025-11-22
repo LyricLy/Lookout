@@ -365,7 +365,7 @@ class Stats(commands.Cog):
     @commands.command()
     async def player(self, ctx: commands.Context, *, player: PlayerStats) -> None:
         players = await self.players()
-        rank = sorted([p.ordinal() for p in players.values()], reverse=True).index(player.ordinal()) + 1
+        rank = sorted([p.ordinal() for p in players.values() if not p.hidden], reverse=True).index(player.ordinal()) + 1
 
         r = None
         for name in player.names:
