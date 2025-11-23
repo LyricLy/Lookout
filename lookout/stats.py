@@ -365,7 +365,6 @@ class Stats(commands.Cog):
     @commands.command()
     async def player(self, ctx: commands.Context, *, player: PlayerStats) -> None:
         players = await self.players()
-        rank = sorted([p.ordinal() for p in players.values() if not p.hidden], reverse=True).index(player.ordinal()) + 1
 
         r = None
         for name in player.names:
@@ -379,6 +378,7 @@ class Stats(commands.Cog):
         if player.hidden:
             embed = discord.Embed(description=f"### {title}\nThis player has chosen to hide their profile.")
         else:
+            rank = sorted([p.ordinal() for p in players.values() if not p.hidden], reverse=True).index(player.ordinal()) + 1
             embed = discord.Embed(description=f"### {title}\nRated {player.ordinal():.0f} (#{rank:,})")
             embed.add_field(name="Winrates", value=textwrap.dedent(f"""
             - Overall {player.winrate_in(Part.ALL)}
