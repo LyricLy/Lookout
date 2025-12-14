@@ -453,7 +453,7 @@ class Stats(commands.Cog):
         await ctx.send(":+1:")
 
     @commands.command()
-    @commands.is_owner()
+    @commands.check_any(commands.has_role("Game host"), commands.is_owner())
     async def connect(self, ctx: commands.Context, who: discord.Member, *, player: PlayerStats) -> None:
         await self.bot.db.execute("INSERT OR REPLACE INTO DiscordConnections (discord_id, player) VALUES (?, ?)", (who.id, player.id))
         await self.bot.db.commit()
