@@ -84,7 +84,6 @@ class Gamelogs(commands.Cog):
             except aiosqlite.IntegrityError:
                 await self.bot.db.execute("UPDATE Games SET from_log = ?2, message_count = ?3, analysis = ?4, analysis_version = ?5 WHERE gist = ?1", row)
             else:
-                self.bot.dispatch("game", game)
                 c += 1
             await self.bot.db.commit()
 

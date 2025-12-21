@@ -34,7 +34,7 @@ class Lookout(commands.Bot):
         )
 
     async def on_command_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
-        if isinstance(error, commands.CommandInvokeError):
+        if isinstance(error, (commands.CommandInvokeError, commands.ConversionError)):
             assert ctx.command is not None
             log.exception("In %s:", ctx.command.qualified_name, exc_info=error.original)
             await ctx.send("Unknown error occurred.")

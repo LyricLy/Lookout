@@ -1,20 +1,23 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import enum
 import math
 import logging
 import textwrap
-from collections import Counter
-from contextlib import nullcontext
+from collections import defaultdict, Counter
 from dataclasses import dataclass, field
-from typing import AsyncIterator, Iterable, Literal
+from typing import AsyncIterator, Iterable, Literal, Callable, Any
 
+import aiosqlite
 import discord
 import gamelogs
+import msgpack
 from discord.ext import commands
 from openskill.models import PlackettLuce, PlackettLuceRating
 
+import config
 from .bot import Lookout
 from .logs import gist_of
 
@@ -26,8 +29,8 @@ model = PlackettLuce(limit_sigma=True)
 
 @dataclass
 class Winrate:
-    s: int
-    n: int
+    s: int = 0
+    n: int = 0
 
     def interval(self) -> tuple[float, float]:
         z = 3
@@ -61,6 +64,12 @@ class Winrate:
             return "N/A (no games)"
         else:
             return f"{centre*100:.2f}% ± {radius*100:.2f}% ({self.s}/{self.n})"
+
+    def __add__(self, other: Winrate) -> Winrate:
+        return Winrate(self.s + other.s, self.n + other.n)
+
+    def __sub__(self, other: Winrate) -> Winrate:
+        return Winrate(self.s - other.s, self.n - other.n)
 
     def __lt__(self, other: Winrate) -> bool:
         if not isinstance(other, Winrate):
@@ -100,27 +109,26 @@ class Part(enum.Enum):
     ALL = TOWN + PURPLE
 
 @dataclass
-class PlayerStats:
+class PlayerInfo:
     id: int
     names: list[str]
-    member: int | None
+    user: discord.User | None
     hidden: bool
-    rating: PlackettLuceRating = field(default_factory=model.rating)
-    games_won: Counter[RoleClass] = field(default_factory=Counter)
-    games_in: Counter[RoleClass] = field(default_factory=Counter)
+    rank: int
+    rating: PlackettLuceRating
+    winrates: dict[RoleClass, Winrate]
 
     def ordinal(self) -> float:
         return self.rating.ordinal(target=1000, alpha=21)
 
     def winrate_in(self, classes: Part) -> Winrate:
-        return Winrate(sum([self.games_won[c] for c in classes.value]), self.played_in(classes))
+        return sum([self.winrates.get(c, Winrate()) for c in classes.value], Winrate())
 
     def played_in(self, classes: Part) -> int:
-        return sum([self.games_in[c] for c in classes.value])
+        return sum([self.winrates.get(c, Winrate()).n for c in classes.value])
 
     @classmethod
-    async def convert(cls, ctx: commands.Context, argument: str) -> PlayerStats:
-        players = await ctx.bot.get_cog("Stats").players(ctx)
+    async def convert(cls, ctx: commands.Context, argument: str) -> PlayerInfo:
         async with ctx.bot.db.execute("SELECT player FROM Names WHERE name = ?", (argument,)) as cur:
             r = await cur.fetchone()
         if not r:
@@ -135,9 +143,15 @@ class PlayerStats:
                 if not r:
                     await ctx.send(f"I don't know what {member.mention}'s ToS2 account is.")
                     raise commands.BadArgument()
-        return players[r[0]]
+        return await ctx.bot.get_cog("Stats").fetch_player(r[0])
 
-type Players = dict[int, PlayerStats]
+@dataclass
+class PlayerStats:
+    rating: PlackettLuceRating
+    winrates: defaultdict[RoleClass, Winrate]
+
+
+type Players = defaultdict[int, PlayerStats]
 type Criterion = Part | Literal["rating", "played"]
 
 
@@ -173,7 +187,7 @@ class Jump(discord.ui.Modal):
 class TopPaginator(discord.ui.Container):
     display = discord.ui.TextDisplay("")
 
-    def __init__(self, players: Iterable[PlayerStats], part: Criterion) -> None:
+    def __init__(self, players: Iterable[PlayerInfo], part: Criterion) -> None:
         super().__init__(accent_colour=discord.Colour(0x6bfc03))
         self.part: Criterion = part
         self.players = sorted(players, key=self.key, reverse=True)
@@ -181,7 +195,7 @@ class TopPaginator(discord.ui.Container):
         self.page = 0
         self.draw()
 
-    def key(self, player: PlayerStats) -> Winrate | float:
+    def key(self, player: PlayerInfo) -> Winrate | float:
         if self.part == "rating":
             return player.ordinal()
         elif self.part == "played":
@@ -211,7 +225,7 @@ class TopPaginator(discord.ui.Container):
                 return ""
         return f"Sorting by {n}. Confidence intervals are ordered by lower bound, not the centre."
 
-    def show_key(self, player: PlayerStats) -> str:
+    def show_key(self, player: PlayerInfo) -> str:
         k = self.key(player)
         if self.part == "rating":
             return f"{k:.0f}"
@@ -225,7 +239,7 @@ class TopPaginator(discord.ui.Container):
 
     def draw(self, *, obscure: bool = False) -> None:
         start = self.page*self.per_page
-        lb = "\n".join([f"{start+1}. {f'<@{player.member}>' if player.member else ('\u200b'*obscure).join(player.names[0])} - {self.show_key(player)}" for player in self.players[start:start+self.per_page]])
+        lb = "\n".join([f"{start+1}. {f'{player.user.mention}' if player.user else ('\u200b'*obscure).join(player.names[0])} - {self.show_key(player)}" for player in self.players[start:start+self.per_page]])
         self.display.content = f"# Leaderboard\n{self.key_desc()}\n{lb}\n-# Page {self.page+1} of {len(self.players) // self.per_page}"
 
     def go_to_page(self, num: int) -> None:
@@ -259,7 +273,7 @@ class TopPaginator(discord.ui.Container):
 class TopPaginatorView(discord.ui.LayoutView):
     message: discord.Message
 
-    def __init__(self, owner: discord.User | discord.Member, players: Iterable[PlayerStats], part: Criterion) -> None:
+    def __init__(self, owner: discord.User | discord.Member, players: Iterable[PlayerInfo], part: Criterion) -> None:
         super().__init__()
         self.owner = owner
         self.container = TopPaginator(players, part)
@@ -281,9 +295,14 @@ class Stats(commands.Cog):
 
     def __init__(self, bot: Lookout) -> None:
         self.bot = bot
-        self._players: Players | None = None
 
-    async def update_game(self, gist, from_log):
+    async def cog_load(self) -> None:
+        self.task = asyncio.create_task(self.update_loop())
+
+    async def cog_unload(self) -> None:
+        self.task.cancel()
+
+    async def update_game(self, gist: str, from_log: str) -> None:
         async with self.bot.db.execute("SELECT clean_content FROM Gamelogs WHERE hash = ?", (from_log,)) as cur:
             content, = await cur.fetchone()  # type: ignore
         try:
@@ -303,69 +322,144 @@ class Stats(commands.Cog):
                     asyncio.create_task(self.update_game(gist, from_log))
                 yield game
 
-    async def run_game(self, players: Players, game: gamelogs.GameResult) -> None:
-        teams = [[], []]
-        ratings = [[], []]
-        for player in game.players:
-            await self.bot.db.execute("INSERT OR IGNORE INTO Names VALUES (?, (SELECT COALESCE(MAX(player), 0) + 1 FROM Names))", (player.account_name,))
+    async def run_games(self) -> Players:
+        players = defaultdict(lambda: PlayerStats(model.rating(), defaultdict(Winrate)))
 
-            async with self.bot.db.execute("SELECT player FROM Names WHERE name = ?", (player.account_name,)) as cur:
-                key, = await cur.fetchone()  # type: ignore
+        async for game in self.games():
+            teams = [[], []]
+            ratings = [[], []]
+            for player in game.players:
+                await self.bot.db.execute("INSERT OR IGNORE INTO Names VALUES (?, (SELECT COALESCE(MAX(player), 0) + 1 FROM Names))", (player.account_name,))
 
-            if key not in players:
-                async with self.bot.db.execute("SELECT name FROM Names WHERE player = ? ORDER BY LENGTH(name), name", (key,)) as cur:
-                    names = [name for name, in await cur.fetchall()]
-                async with self.bot.db.execute("SELECT discord_id FROM DiscordConnections WHERE player = ?", (key,)) as cur:
-                    member = await cur.fetchone()
-                async with self.bot.db.execute("SELECT EXISTS(SELECT 1 FROM Hidden WHERE player = ?)", (key,)) as cur:
-                    hidden, = await cur.fetchone()  # type: ignore
+                async with self.bot.db.execute("SELECT player FROM Names WHERE name = ?", (player.account_name,)) as cur:
+                    key, = await cur.fetchone()  # type: ignore
 
-                players[key] = PlayerStats(key, names, member[0] if member else None, hidden)
+                # update winrates
+                saw_hunt = game.hunt_reached and (not player.died or player.died >= (game.hunt_reached, "day"))
+                if player.ending_ident.faction == gamelogs.town:
+                    c = RoleClass.TOWN_HUNT if saw_hunt else RoleClass.TOWN
+                elif player.ending_ident.role.default_faction == gamelogs.coven:
+                    c = RoleClass.COVEN
+                else:
+                    c = RoleClass.TT_HUNT if saw_hunt else RoleClass.TT
+                if player.won:
+                    players[key].winrates[c].s += 1
+                players[key].winrates[c].n += 1
 
-            # update winrates
-            saw_hunt = game.hunt_reached and (not player.died or player.died >= (game.hunt_reached, "day"))
-            if player.ending_ident.faction == gamelogs.town:
-                c = RoleClass.TOWN_HUNT if saw_hunt else RoleClass.TOWN
-            elif player.ending_ident.role.default_faction == gamelogs.coven:
-                c = RoleClass.COVEN
-            else:
-                c = RoleClass.TT_HUNT if saw_hunt else RoleClass.TT
-            if player.won:
-                players[key].games_won[c] += 1
-            players[key].games_in[c] += 1
+                i = player.ending_ident.faction == gamelogs.coven
+                teams[i].append(key)
+                ratings[i].append(players[key].rating)
 
-            i = player.ending_ident.faction == gamelogs.coven
-            teams[i].append(key)
-            ratings[i].append(players[key].rating)
+            # pad coven
+            avg = sum([r.mu for r in ratings[1]]) / len(ratings[1])
+            ratings[1].extend([model.rating(mu=avg, sigma=avg/3) for _ in range(len(ratings[0]) - len(ratings[1]))])
 
-        # pad coven
-        avg = sum([r.mu for r in ratings[1]]) / len(ratings[1])
-        ratings[1].extend([model.rating(mu=avg, sigma=avg/3) for _ in range(len(ratings[0]) - len(ratings[1]))])
+            new_ratings = model.rate(ratings, ranks=[1, 2] if game.victor == gamelogs.town else [2, 1])
+            for team, team_ratings in zip(teams, new_ratings):
+                for player, new_rating in zip(team, team_ratings):
+                    players[player].rating = new_rating
 
-        new_ratings = model.rate(ratings, ranks=[1, 2] if game.victor == gamelogs.town else [2, 1])
-        for team, team_ratings in zip(teams, new_ratings):
-            for player, new_rating in zip(team, team_ratings):
-                players[player].rating = new_rating
+        return players
 
-    @commands.Cog.listener()
-    async def on_game(self, game: gamelogs.GameResult) -> None:
-        if self._players is not None:
-            await self.run_game(self._players, game)
+    async def save_stats(self, players: Players) -> None:
+        for player, stats in players.items():
+            await self.bot.db.execute("INSERT OR REPLACE INTO RatingCache (player, mu, sigma, winrates) VALUES (?, ?, ?, ?)", (
+                player,
+                stats.rating.mu,
+                stats.rating.sigma,
+                {str(k.value): [v.s, v.n] for k, v in stats.winrates.items()},
+            ))
+        await self.bot.db.commit()
 
-    async def players(self, ctx: commands.Context | None = None) -> Players:
-        if self._players is not None:
-            return self._players
-        r = {}
-        async with ctx.typing() if ctx else nullcontext():
-            async for game in self.games():
-                await self.run_game(r, game)
-        self._players = r
-        return r
+    async def update_loop(self) -> None:
+        while True:
+            try:
+                async with self.bot.db.execute("SELECT last_update FROM Globals") as cur:
+                    last_update, = await cur.fetchone()  # type: ignore
+                next_update = config.next_update(last_update)
+                await discord.utils.sleep_until(next_update - config.grace_period)
+
+                players = await self.run_games()
+                old = await self.fetch_discord_players()
+                await discord.utils.sleep_until(next_update)
+
+                await self.save_stats(players)
+                new = await self.fetch_discord_players()
+                changes = []
+                for old_you, new_you in zip(old, new):
+                    if not new_you.user or old_you.rating == new_you.rating:
+                        continue
+                    recents = new_you.winrate_in(Part.ALL) - old_you.winrate_in(Part.ALL)
+                    changes.append(f"{new_you.user.mention} {old_you.ordinal():.0f} -> {new_you.ordinal():.0f} (W-L {recents.s}-{recents.n-recents.s})")
+                embed = discord.Embed(
+                    title=f"{last_update.strftime('%B %-d') if last_update.year == next_update.year else last_update.strftime('%B %-d %Y')} - {next_update.strftime('%B %-d %Y')}",
+                    description="\n".join(changes),
+                    colour=discord.Colour.dark_purple(),
+                )
+                report_channel = self.bot.get_partial_messageable(config.report_channel_id)
+                await report_channel.send(embed=embed)
+
+                await self.bot.db.execute("UPDATE Globals SET last_update = ?", (datetime.datetime.now(datetime.timezone.utc),))
+            except Exception:
+                log.exception("error in update loop")
+                await asyncio.sleep(10)
+
+    async def _row_to_player_info(self, r: aiosqlite.Row) -> PlayerInfo:
+        async with self.bot.db.execute("SELECT name FROM Names WHERE player = ?", (r["player"],)) as cur:
+            names = await cur.fetchall()
+        return PlayerInfo(
+            r["player"],
+            [x[0] for x in names],
+            self.bot.get_user(r["discord_id"]) if r["discord_id"] else None,
+            r["rank"] is None,
+            r["rank"],
+            model.rating(r["mu"], r["sigma"]),
+            {RoleClass(int(k)): Winrate(s, n) for k, (s, n) in r["winrates"].items()},
+        )
+
+    async def fetch_player(self, player: int) -> PlayerInfo:
+        async with self.bot.db.execute("SELECT * FROM RatingCache LEFT JOIN Ranks USING (player) LEFT JOIN DiscordConnections USING (player) WHERE player = ?", (player,)) as cur:
+            r = await cur.fetchone()
+            assert r is not None, "oh, I thought this was impossible"
+        return await self._row_to_player_info(r)
+
+    async def fetch_players(self) -> list[PlayerInfo]:
+        async with self.bot.db.execute("SELECT * FROM RatingCache INNER JOIN Ranks USING (player) LEFT JOIN DiscordConnections USING (player)") as cur:
+            return [await self._row_to_player_info(r) async for r in cur]
+
+    async def fetch_discord_players(self) -> list[PlayerInfo]:
+        async with self.bot.db.execute("SELECT * FROM RatingCache INNER JOIN Ranks USING (player) INNER JOIN DiscordConnections USING (player) ORDER BY player") as cur:
+            return [await self._row_to_player_info(r) async for r in cur]
 
     @commands.command()
-    async def player(self, ctx: commands.Context, *, player: PlayerStats) -> None:
-        players = await self.players()
+    async def info(self, ctx: commands.Context) -> None:
+        async with self.bot.db.execute("SELECT last_update FROM Globals") as cur:
+            last_update, = await cur.fetchone()  # type: ignore
 
+        r = Counter()
+        async for game in self.games():
+            town_won = game.victor == gamelogs.town
+            r[town_won, bool(game.hunt_reached)] += 1
+
+        embed = discord.Embed(
+            title="Lookout",
+            description=textwrap.dedent(f"""
+                Dutifully tracking {sum(r.values()):,} games,
+                {r[True, False] + r[True, True]:,} Town victories,
+                {r[False, False] + r[False, True]:,} Coven victories ({r[False, False]:,} by majority, {r[False, True]:,} by countdown),
+                {r[False, True] + r[True, True]:,} hunts ({r[True, True]:,} won by Town, {r[False, True]:,} won by Coven),
+                and {sum(r.values())*15:,} crashouts.
+
+                Last rating update on {discord.utils.format_dt(last_update, "D")}, next on {discord.utils.format_dt(config.next_update(last_update))}
+                Made with love by {config.me_emoji} <3
+            """),
+            colour=discord.Colour.dark_green(),
+        )
+
+        await ctx.send(embed=embed)
+
+    @commands.command()
+    async def player(self, ctx: commands.Context, *, player: PlayerInfo) -> None:
         r = None
         for name in player.names:
             async with self.bot.db.execute("SELECT thread_id FROM Blacklists WHERE account_name = ?", (name,)) as cur:
@@ -374,22 +468,21 @@ class Stats(commands.Cog):
                 break
 
         names = ", ".join(player.names)
-        title = f"<@{player.member}> ({names})" if player.member else names
+        title = f"{player.user.mention} ({names})" if player.user else names
         if player.hidden:
             embed = discord.Embed(description=f"### {title}\nThis player has chosen to hide their profile.")
         else:
-            rank = sorted([p.ordinal() for p in players.values() if not p.hidden], reverse=True).index(player.ordinal()) + 1
-            embed = discord.Embed(description=f"### {title}\nRated {player.ordinal():.0f} (#{rank:,})")
+            embed = discord.Embed(description=f"### {title}\nRated {player.ordinal():.0f} (#{player.rank:,})")
             embed.add_field(name="Winrates", value=textwrap.dedent(f"""
-            - Overall {player.winrate_in(Part.ALL)}
-            - Town {player.winrate_in(Part.TOWN)}
-            - Purple {player.winrate_in(Part.PURPLE)}
-              - Coven {player.winrate_in(Part.COVEN)}
-              - TT {player.winrate_in(Part.TT)}
+                - Overall {player.winrate_in(Part.ALL)}
+                - Town {player.winrate_in(Part.TOWN)}
+                - Purple {player.winrate_in(Part.PURPLE)}
+                  - Coven {player.winrate_in(Part.COVEN)}
+                  - TT {player.winrate_in(Part.TT)}
             """))
             embed.add_field(name="Winrates in hunt", value=textwrap.dedent(f"""
-            - Town {player.winrate_in(Part.TOWN_HUNT)}
-            - TT {player.winrate_in(Part.TT_HUNT)}
+                - Town {player.winrate_in(Part.TOWN_HUNT)}
+                - TT {player.winrate_in(Part.TT_HUNT)}
             """))
         if r:
             embed.add_field(name="Player blacklisted", value=f"<#{r[0]}>", inline=False)
@@ -399,8 +492,6 @@ class Stats(commands.Cog):
 
     @commands.command(aliases=["lb", "leaderboard", "players"])
     async def top(self, ctx: commands.Context, *, criterion: str = "rating") -> None:
-        players = await self.players(ctx)
-
         criterion = criterion.casefold()
         if "hunt" in criterion:
             part = Part.TOWN_HUNT if "town" in criterion or "green" in criterion else Part.TT_HUNT
@@ -415,7 +506,7 @@ class Stats(commands.Cog):
                 "tt": Part.TT,
                 "played": "played",
             }.get(criterion, "rating")
-        view = TopPaginatorView(ctx.author, (p for p in players.values() if not p.hidden), part)
+        view = TopPaginatorView(ctx.author, await self.fetch_players(), part)
         view.message = await ctx.send(view=view)
 
     @commands.command()
@@ -426,8 +517,6 @@ class Stats(commands.Cog):
             await ctx.send("Sorry, I don't know who you are.")
             return
         await self.bot.db.commit()
-        if self._players:
-            self._players[r[0]].hidden = True
         await ctx.send(":+1:")
 
     @commands.command()
@@ -439,25 +528,21 @@ class Stats(commands.Cog):
             return
         await self.bot.db.execute("DELETE FROM Hidden WHERE player = ?", (r[0],))
         await self.bot.db.commit()
-        if self._players:
-            self._players[r[0]].hidden = False
         await ctx.send(":+1:")
 
     @commands.command(name="is")
     @commands.is_owner()
-    async def _is(self, ctx: commands.Context, a: PlayerStats, b: PlayerStats) -> None:
+    async def _is(self, ctx: commands.Context, a: PlayerInfo, b: PlayerInfo) -> None:
         await self.bot.db.execute("UPDATE DiscordConnections SET player = ? WHERE player = ?", (a.id, b.id))
         await self.bot.db.execute("UPDATE Names SET player = ? WHERE player = ?", (a.id, b.id))
         await self.bot.db.commit()
-        self._players = None
         await ctx.send(":+1:")
 
     @commands.command()
     @commands.check_any(commands.has_role("Game host"), commands.is_owner())
-    async def connect(self, ctx: commands.Context, who: discord.Member, *, player: PlayerStats) -> None:
+    async def connect(self, ctx: commands.Context, who: discord.Member, *, player: PlayerInfo) -> None:
         await self.bot.db.execute("INSERT OR REPLACE INTO DiscordConnections (discord_id, player) VALUES (?, ?)", (who.id, player.id))
         await self.bot.db.commit()
-        player.member = who.id
         await ctx.send(":+1:")
 
 

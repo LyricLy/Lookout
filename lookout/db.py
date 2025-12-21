@@ -114,6 +114,10 @@ async def connect(path: str) -> aiosqlite.Connection:
 
     aiosqlite.register_adapter(gamelogs.GameResult, lambda game: msgpack.packb(ser_game_result(game)))
     aiosqlite.register_converter("GAME", lambda data: de_game_result(msgpack.unpackb(data)))
+    aiosqlite.register_adapter(dict, msgpack.packb)
+    aiosqlite.register_converter("MSGPACK", msgpack.unpackb)
+    aiosqlite.register_adapter(datetime.datetime, datetime.datetime.isoformat)
+    aiosqlite.register_converter("DATETIME", lambda s: datetime.datetime.fromisoformat(s.decode()))
 
     current_version, = await (await db.execute("PRAGMA user_version")).fetchone()  # type: ignore
     migrations = get_migrations()
