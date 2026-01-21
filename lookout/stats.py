@@ -113,7 +113,7 @@ class PlayerInfo:
     id: int
     names: list[str]
     user: discord.User | None
-    hidden: bool
+    hidden: str | None
     rank: int
     rating: PlackettLuceRating
     winrates: dict[RoleClass, Winrate]
@@ -407,11 +407,15 @@ class Stats(commands.Cog):
     async def _row_to_player_info(self, r: aiosqlite.Row) -> PlayerInfo:
         async with self.bot.db.execute("SELECT name FROM Names WHERE player = ?", (r["player"],)) as cur:
             names = await cur.fetchall()
+        hidden = None
+        if r["rank"] is None:
+            async with self.bot.db.execute("SELECT why FROM Hidden WHERE player = ?", (r["player"],)) as cur:
+                hidden, = await cur.fetchone()  # type: ignore
         return PlayerInfo(
             r["player"],
             [x[0] for x in names],
             self.bot.get_user(r["discord_id"]) if r["discord_id"] else None,
-            r["rank"] is None,
+            hidden,
             r["rank"],
             model.rating(r["mu"], r["sigma"]),
             {RoleClass(int(k)): Winrate(s, n) for k, (s, n) in r["winrates"].items()},
@@ -469,8 +473,10 @@ class Stats(commands.Cog):
 
         names = ", ".join(player.names)
         title = f"{player.user.mention} ({names})" if player.user else names
-        if player.hidden:
+        if player.hidden == "user":
             embed = discord.Embed(description=f"### {title}\nThis player has chosen to hide their profile.")
+        elif player.hidden == "cheated":
+            embed = discord.Embed(description=f"### {title}\nThis player's profile is hidden because they were found to have played illegitimately.")
         else:
             embed = discord.Embed(description=f"### {title}\nRated {player.ordinal():.0f} (#{player.rank:,})")
             embed.add_field(name="Winrates", value=textwrap.dedent(f"""
@@ -520,6 +526,20 @@ class Stats(commands.Cog):
         await ctx.send(":+1:")
 
     @commands.command()
+    @commands.is_owner()
+    async def cheated(self, ctx: commands.Context, player: PlayerInfo) -> None:
+        await self.bot.db.execute("INSERT OR REPLACE INTO Hidden (player, why) VALUES (?, 'cheated')", (player.id,))
+        await self.bot.db.commit()
+        await ctx.send(":+1:")
+
+    @commands.command()
+    @commands.is_owner()
+    async def uncheated(self, ctx: commands.Context, player: PlayerInfo) -> None:
+        await self.bot.db.execute("DELETE FROM Hidden WHERE player = ?", (player.id,))
+        await self.bot.db.commit()
+        await ctx.send(":+1:")
+
+    @commands.command(aliases=["unhide"])
     async def show(self, ctx: commands.Context) -> None:
         async with self.bot.db.execute("SELECT player FROM DiscordConnections WHERE discord_id = ?", (ctx.author.id,)) as cur:
             r = await cur.fetchone()
