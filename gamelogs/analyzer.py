@@ -7,29 +7,30 @@ from .messages import *
 from .model import *
 
 
-class Analyzer[Y, R]:
-    def get_message(self, message: Message) -> Y:
+class Analyzer[R]:
+    def get_message(self, message: Message) -> None:
         raise NotImplementedError()
 
     def result(self) -> R:
         raise NotImplementedError()
 
-    def __and__[Y2, R2](self, other: Analyzer[Y2, R2]) -> ZipAnalyzer[Y, Y2, R, R2]:
+    def __and__[R2](self, other: Analyzer[R2]) -> ZipAnalyzer[R, R2]:
         return ZipAnalyzer(self, other)
 
-class ZipAnalyzer[Y1, Y2, R1, R2](Analyzer[tuple[Y1, Y2], tuple[R1, R2]]):
-    def __init__(self, x: Analyzer[Y1, R1], y: Analyzer[Y2, R2]):
+class ZipAnalyzer[R1, R2](Analyzer[tuple[R1, R2]]):
+    def __init__(self, x: Analyzer[R1], y: Analyzer[R2]):
         self.x = x
         self.y = y
 
-    def get_message(self, message: Message) -> tuple[Y1, Y2]:
-        return self.x.get_message(message), self.y.get_message(message)
+    def get_message(self, message: Message) -> None:
+        self.x.get_message(message)
+        self.y.get_message(message)
 
     def result(self) -> tuple[R1, R2]:
         return self.x.result(), self.y.result()
 
 
-class MessageCountAnalyzer(Analyzer[None, int]):
+class MessageCountAnalyzer(Analyzer[int]):
     def __init__(self):
         self.count = 0
 
@@ -43,7 +44,7 @@ class MessageCountAnalyzer(Analyzer[None, int]):
 def is_evil_raiser(ident: Identity) -> bool:
     return ident.role.name == "Necromancer" or ident.role.name == "Retributionist" and ident.faction != town
 
-class ResultAnalyzer(Analyzer[None, GameResult]):
+class ResultAnalyzer(Analyzer[GameResult]):
     def __init__(self) -> None:
         self.players = {}
         self.townie_colours = []

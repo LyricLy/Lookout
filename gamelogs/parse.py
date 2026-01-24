@@ -43,15 +43,10 @@ def to_messages(text: str, clean_tags: bool) -> Iterator[Message]:
         else:
             yield message
 
-def parse[R](text: str, analyzer: Analyzer[Any, R], *, clean_tags: bool = True) -> R:
+def parse[R](text: str, analyzer: Analyzer[R], *, clean_tags: bool = True) -> R:
     for message in to_messages(text, clean_tags):
         analyzer.get_message(message)
     return analyzer.result()
 
 def parse_result(text: str, *, clean_tags: bool = True) -> GameResult:
     return parse(text, ResultAnalyzer(), clean_tags=clean_tags)
-
-def parse_iter[Y, R](text: str, analyzer: Analyzer[Y, R], *, clean_tags: bool = True) -> Generator[Y, None, R]:
-    for message in to_messages(text, clean_tags):
-        yield analyzer.get_message(message)
-    return analyzer.result()

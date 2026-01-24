@@ -248,7 +248,3 @@ class DrawWarning(SystemMessage):
 @dataclass
 class StartJunk(SystemMessage):
     regex = re.compile(r"PLAYER INFO")
-
-    @classmethod
-    def from_match(cls, m: re.Match) -> Self:
-        return cls()

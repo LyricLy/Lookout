@@ -15,6 +15,7 @@ extensions = [
     "..blacklist",
     "..logs",
     "..stats",
+    "..search",
 ]
 
 

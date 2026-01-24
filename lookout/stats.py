@@ -13,13 +13,13 @@ from typing import AsyncIterator, Iterable, Literal, Callable, Any
 import aiosqlite
 import discord
 import gamelogs
-import msgpack
 from discord.ext import commands
 from openskill.models import PlackettLuce, PlackettLuceRating
 
 import config
 from .bot import Lookout
 from .logs import gist_of
+from .utils import ContainerView
 
 
 log = logging.getLogger(__name__)
@@ -135,7 +135,7 @@ class PlayerInfo:
             try:
                 member = await commands.MemberConverter().convert(ctx, argument)
             except commands.MemberNotFound:
-                await ctx.send("I don't know that player.")
+                await ctx.send(f"I don't know the player '{argument}'.")
                 raise commands.BadArgument()
             else:
                 async with ctx.bot.db.execute("SELECT player FROM DiscordConnections WHERE discord_id = ?", (member.id,)) as cur:
@@ -177,7 +177,7 @@ class Jump(discord.ui.Modal):
             self.container.go_to_page(idx // self.container.per_page)
         else:
             if not self.container.has_page(page):
-                await interaction.response.send_message(f"Page number {page} is out of bounds.", ephemeral=True)
+                await interaction.response.send_message(f"Page number {page+1} is out of bounds.", ephemeral=True)
                 return
             self.container.go_to_page(page)
         self.container.draw()
@@ -240,7 +240,7 @@ class TopPaginator(discord.ui.Container):
     def draw(self, *, obscure: bool = False) -> None:
         start = self.page*self.per_page
         lb = "\n".join([f"{start+1}. {f'{player.user.mention}' if player.user else ('\u200b'*obscure).join(player.names[0])} - {self.show_key(player)}" for player in self.players[start:start+self.per_page]])
-        self.display.content = f"# Leaderboard\n{self.key_desc()}\n{lb}\n-# Page {self.page+1} of {len(self.players) // self.per_page}"
+        self.display.content = f"# Leaderboard\n{self.key_desc()}\n{lb}\n-# Page {self.page+1} of {len(self.players) // self.per_page:,}"
 
     def go_to_page(self, num: int) -> None:
         self.page = num
@@ -315,8 +315,8 @@ class Stats(commands.Cog):
             await self.bot.db.commit()
             log.info("updated game from log %s to version %d", from_log, gamelogs.version)
 
-    async def games(self) -> AsyncIterator[gamelogs.GameResult]:
-        async with self.bot.db.execute("SELECT gist, analysis, analysis_version, from_log FROM Games") as cur:
+    async def games(self, where: str | None = None) -> AsyncIterator[gamelogs.GameResult]:
+        async with self.bot.db.execute("SELECT gist, analysis, analysis_version, from_log FROM Games" + f" WHERE {where}"*bool(where)) as cur:
             async for gist, game, version, from_log in cur:
                 if version < gamelogs.version:
                     asyncio.create_task(self.update_game(gist, from_log))
@@ -512,7 +512,7 @@ class Stats(commands.Cog):
                 "tt": Part.TT,
                 "played": "played",
             }.get(criterion, "rating")
-        view = TopPaginatorView(ctx.author, await self.fetch_players(), part)
+        view = ContainerView(ctx.author, TopPaginator(await self.fetch_players(), part))
         view.message = await ctx.send(view=view)
 
     @commands.command()
