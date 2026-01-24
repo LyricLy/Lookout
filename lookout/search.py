@@ -121,6 +121,7 @@ KEYWORDS = {
     "green": lambda ident: ident.faction == gamelogs.town,
     "purple": lambda ident: ident.faction == gamelogs.coven,
     "tt": lambda ident: ident.faction == gamelogs.coven and ident.role.default_faction == gamelogs.town,
+    **{n: lambda ident, rs=rs: ident.role in rs for n, rs in BUCKETS.items()},
 }
 
 @dataclass
@@ -134,45 +135,31 @@ class PlayerSpecifier:
     @classmethod
     async def convert(cls, ctx: commands.Context, argument: str) -> PlayerSpecifier:
         names = None
-        idents = set()
+        idents = []
         for role in ROLES:
-            idents.add(gamelogs.Identity(role))
+            idents.append(gamelogs.Identity(role))
             if role.default_faction == gamelogs.town:
-                idents.add(gamelogs.Identity(role, gamelogs.coven))
-
-        bucket_specified = False
-        tt_specified = False
+                idents.append(gamelogs.Identity(role, gamelogs.coven))
 
         words = argument.split()
         while words:
-            if not tt_specified:
-                for i in (-1, 0):
-                    if (f := KEYWORDS.get(words[i].lower())) and (n := {ident for ident in idents if f(ident)}):
+            for izer in (lambda l: (-l, None), lambda l: (None, l)):
+                for kw, f in KEYWORDS.items():
+                    kw_parts = kw.split()
+                    i, j = izer(len(kw_parts))
+                    if [w.lower() for w in words[i:j]] == kw_parts and 0 < len(n := [ident for ident in idents if f(ident)]) < len(idents):
                         idents = n
-                        words.pop(i)
-                        tt_specified = True
+                        del words[i:j]
                         break
-
-            if not bucket_specified:
-                for izer in (lambda l: (-l, None), lambda l: (None, l)):
-                    for name, roles in BUCKETS.items():
-                        name_words = name.split()
-                        i, j = izer(len(name_words))
-                        if [w.lower() for w in words[i:j]] == name_words and (n := {ident for ident in idents if ident.role in roles}):
-                            idents = n
-                            del words[i:j]
-                            bucket_specified = True
-                            break
-                    if bucket_specified:
-                        break
-                if bucket_specified:
+                else:
                     continue
+                break
+            else:
+                player = await PlayerInfo.convert(ctx, " ".join(words))
+                names = set(player.names)
+                break
 
-            player = await PlayerInfo.convert(ctx, " ".join(words))
-            names = set(player.names)
-            break
-
-        return cls(names, idents)
+        return cls(names, set(idents))
 
 
 @dataclass
