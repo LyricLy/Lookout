@@ -19,5 +19,5 @@ class ContainerView[T: discord.ui.Container](discord.ui.LayoutView):
         return True
 
     async def on_timeout(self):
-        self.container.destroy()  # type: ignore
+        await self.container.destroy()  # type: ignore
         await self.message.edit(view=self)

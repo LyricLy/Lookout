@@ -232,7 +232,7 @@ class SearchResults(discord.ui.Container):
     def has_page(self, num: int) -> bool:
         return 0 <= num < len(self.results)
 
-    async def draw(self) -> None:
+    async def draw(self, *, obscure: bool = False) -> None:
         game = self.results[self.page]
 
         async with self.bot.db.execute("SELECT filename, clean_content, message_id FROM Gamelogs INNER JOIN Games ON hash = from_log WHERE gist = ?", (gist_of(game),)) as cur:
@@ -255,9 +255,10 @@ class SearchResults(discord.ui.Container):
         rollout = []
         for player in game.players:
             bold = "**"*player.won
+            obsc = ('\u200b'*obscure).join
             role = f"{player.starting_ident.role} {player.ending_ident.role}" if player.starting_ident != player.ending_ident else f"{player.starting_ident.role}"
             faction = " (TT)"*(player.starting_ident.role.default_faction != player.starting_ident.faction)
-            rollout.append(f"- [{player.number}] {player.game_name} ({player.account_name}) - {bold}{role}{faction}{bold}")
+            rollout.append(f"- [{player.number}] {obsc(player.game_name)} ({obsc(player.account_name)}) - {bold}{role}{faction}{bold}")
 
         self.display.children[0].content = f"Uploaded {discord.utils.format_dt(discord.utils.snowflake_time(message_id), 'D')}\n{outcome}\n{'\n'.join(rollout)}"
         self.display.accessory.media = f"{config.base_url}/static/{thumbnail}"
@@ -287,7 +288,8 @@ class SearchResults(discord.ui.Container):
     async def jump(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await interaction.response.send_modal(Jump(self))
 
-    def destroy(self) -> None:
+    async def destroy(self) -> None:
+        await self.draw(obscure=True)
         self.remove_item(self.ar)
 
 

@@ -265,7 +265,7 @@ class TopPaginator(discord.ui.Container):
     async def jump(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await interaction.response.send_modal(Jump(self))
 
-    def destroy(self) -> None:
+    async def destroy(self) -> None:
         self.draw(obscure=True)
         self.remove_item(self.ar)
 
