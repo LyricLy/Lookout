@@ -158,19 +158,21 @@ class PlayerSpecifier:
                     continue
                 break
             else:
-                name = " ".join(words)
-
-                if "ign:" in name:
-                    name, ign = name.rsplit("ign:", 1)
-                    ign = ign.strip()
-                    if not name:
+                for i, word in reversed(list(enumerate(words))):
+                    if word.startswith("ign:"):
+                        ign = " ".join([word.removeprefix("ign:"), *words[i+1:]]).strip()
+                        del words[i:]
                         break
+                if not words:
+                    break
 
+                name = " ".join(words)
                 if name.startswith("account:"):
                     names = {name.removeprefix("account:").strip().casefold()}
                 elif name:
                     player = await PlayerInfo.convert(ctx, name)
                     names = {name.casefold() for name in player.names}
+
                 break
 
         return cls(names, ign, set(idents))
