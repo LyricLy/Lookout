@@ -147,7 +147,7 @@ class PlayerSpecifier:
         while words:
             if not tt_specified:
                 for i in (-1, 0):
-                    if (f := KEYWORDS.get(words[i])) and (n := {ident for ident in idents if f(ident)}):
+                    if (f := KEYWORDS.get(words[i].lower())) and (n := {ident for ident in idents if f(ident)}):
                         idents = n
                         words.pop(i)
                         tt_specified = True
@@ -158,7 +158,7 @@ class PlayerSpecifier:
                     for name, roles in BUCKETS.items():
                         name_words = name.split()
                         i, j = izer(len(name_words))
-                        if words[i:j] == name_words and (n := {ident for ident in idents if ident.role in roles}):
+                        if [w.lower() for w in words[i:j]] == name_words and (n := {ident for ident in idents if ident.role in roles}):
                             idents = n
                             del words[i:j]
                             bucket_specified = True
