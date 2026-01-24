@@ -233,6 +233,7 @@ class Jump(discord.ui.Modal):
 class SearchResults(discord.ui.Container):
     display = discord.ui.Section("", accessory=discord.ui.Thumbnail(""))
     file = discord.ui.File("")
+    sep = discord.ui.Separator(spacing=discord.SeparatorSpacing.large)
     underfile = discord.ui.TextDisplay("")
 
     def __init__(self, bot: Lookout, results: list[gamelogs.GameResult]) -> None:
