@@ -132,7 +132,7 @@ class PlayerSpecifier:
     idents: set[gamelogs.Identity]
 
     def matches(self, player: gamelogs.Player) -> bool:
-        return (self.names is None or player.account_name in self.names) and (self.ign is None or player.game_name == self.ign) and (player.starting_ident in self.idents or player.ending_ident in self.idents)
+        return (self.names is None or player.account_name.casefold() in self.names) and (self.ign is None or player.game_name == self.ign) and (player.starting_ident in self.idents or player.ending_ident in self.idents)
 
     @classmethod
     async def convert(cls, ctx: commands.Context, argument: str) -> PlayerSpecifier:
@@ -167,10 +167,10 @@ class PlayerSpecifier:
                         break
 
                 if name.startswith("account:"):
-                    names = {name.removeprefix("account:").strip()}
+                    names = {name.removeprefix("account:").strip().casefold()}
                 elif name:
                     player = await PlayerInfo.convert(ctx, " ".join(words))
-                    names = set(player.names)
+                    names = {name.casefold() for name in player.names}
                 break
 
         return cls(names, ign, set(idents))
