@@ -4,6 +4,7 @@ import calendar
 import datetime
 import io
 from dataclasses import dataclass
+from typing import Literal
 
 import re2 as re
 import discord
@@ -297,6 +298,8 @@ class SearchQuery(commands.FlagConverter):
     before: DateRange | None = None
     during: DateRange | None = None
     after: DateRange | None = None
+    victor: Literal["town", "coven"] | None = commands.flag(aliases=["winner", "won"], default=None)
+    hunt: bool | None = None
 
 
 class Search(commands.Cog):
@@ -317,6 +320,7 @@ class Search(commands.Cog):
 
         chat:
         Search the content of in-game chat messages.
+        May be used multiple times, in which case all clauses must appear. (But not necessarily in the same message.)
 
         from:
         Filter `chat:` to only find messages from a certain players or roles. Uses the same syntax as `has:`.
@@ -326,6 +330,12 @@ class Search(commands.Cog):
         Specify a time period to search in. Used with dates both full (after: 2025-01-25) and partial (during: 2026-01).
         In place of a date, `s4` or `s5` may be written, which correspond to ranked seasons and the corresponding game updates.
         If multiple of these flags are used at once, only the overlap of all flags specified will be searched.
+
+        victor:, winner:, won:
+        Select for the winning faction (`town` or `coven`). Each of these flags has the same effect.
+
+        hunt:
+        Find games that did (`yes`) or did not (`no`) reach hunt.
         """
         stats: Stats = self.bot.get_cog("Stats")  # type: ignore
 
@@ -343,6 +353,12 @@ class Search(commands.Cog):
             where.append(f"{approx_date} > '{query.after.stop}'")
 
         async for game in stats.games(" AND ".join(where)):
+            if query.victor is not None and (query.victor == "town") != (game.victor == gamelogs.town):
+                continue
+
+            if query.hunt is not None and bool(game.hunt_reached) != query.hunt:
+                continue
+
             if not all([any([spec.matches(player) for player in game.players]) for spec in query.has]):
                 continue
 
