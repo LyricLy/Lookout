@@ -268,10 +268,11 @@ class SearchResults(discord.ui.Container):
         rollout = []
         for player in game.players:
             bold = "**"*player.won
+            death = "-#"*bool(player.died)
             obsc = ('\u200b'*obscure).join
             role = f"{player.starting_ident.role} {player.ending_ident.role}" if player.starting_ident != player.ending_ident else f"{player.starting_ident.role}"
             faction = " (TT)"*(player.starting_ident.role.default_faction != player.starting_ident.faction)
-            rollout.append(f"- [{player.number}] {obsc(player.game_name)} ({obsc(player.account_name)}) - {bold}{role}{faction}{bold}")
+            rollout.append(f"{death} - [{player.number}] {obsc(player.game_name)} ({obsc(player.account_name)}) - {bold}{role}{faction}{bold}")
 
         self.display.children[0].content = f"Uploaded {discord.utils.format_dt(discord.utils.snowflake_time(message_id), 'D')}\n{outcome}\n{'\n'.join(rollout)}"
         self.display.accessory.media = f"{config.base_url}/static/{thumbnail}"
