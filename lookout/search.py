@@ -161,7 +161,7 @@ class PlayerSpecifier:
                 name = " ".join(words)
 
                 if "ign:" in name:
-                    name, ign = name.split("ign:")
+                    name, ign = name.rsplit("ign:", 1)
                     ign = ign.strip()
                     if not name:
                         break
@@ -169,7 +169,7 @@ class PlayerSpecifier:
                 if name.startswith("account:"):
                     names = {name.removeprefix("account:").strip().casefold()}
                 elif name:
-                    player = await PlayerInfo.convert(ctx, " ".join(words))
+                    player = await PlayerInfo.convert(ctx, name)
                     names = {name.casefold() for name in player.names}
                 break
 
