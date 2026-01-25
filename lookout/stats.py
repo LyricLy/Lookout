@@ -565,6 +565,19 @@ class Stats(commands.Cog):
         await self.bot.db.commit()
         await ctx.send(":+1:")
 
+    @commands.command()
+    @commands.check_any(commands.has_role("Game host"), commands.is_owner())
+    async def unconnected(self, ctx: commands.Context, *, guild: discord.Guild = commands.CurrentGuild) -> None:
+        members = []
+        for member in guild.members:
+            if member.bot:
+                continue
+            async with self.bot.db.execute("SELECT EXISTS(SELECT 1 FROM DiscordConnections WHERE discord_id = ?)", (member.id,)) as cur:
+                exists, = await cur.fetchone()  # type: ignore
+            if not exists:
+                members.append(member)
+        await ctx.send("\n".join(f"- {member.mention}" for member in members))
+
 
 async def setup(bot: Lookout):
     await bot.add_cog(Stats(bot))
