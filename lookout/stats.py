@@ -329,8 +329,6 @@ class Stats(commands.Cog):
             teams = [[], []]
             ratings = [[], []]
             for player in game.players:
-                await self.bot.db.execute("INSERT OR IGNORE INTO Names VALUES (?, (SELECT COALESCE(MAX(player), 0) + 1 FROM Names))", (player.account_name,))
-
                 async with self.bot.db.execute("SELECT player FROM Names WHERE name = ?", (player.account_name,)) as cur:
                     key, = await cur.fetchone()  # type: ignore
 
@@ -422,9 +420,10 @@ class Stats(commands.Cog):
         )
 
     async def fetch_player(self, player: int) -> PlayerInfo:
-        async with self.bot.db.execute("SELECT * FROM RatingCache LEFT JOIN Ranks USING (player) LEFT JOIN DiscordConnections USING (player) WHERE player = ?", (player,)) as cur:
+        async with self.bot.db.execute("SELECT * FROM RatingCache LEFT JOIN Ranks USING (player) FULL JOIN DiscordConnections USING (player) WHERE player = ?", (player,)) as cur:
             r = await cur.fetchone()
-            assert r is not None, "oh, I thought this was impossible"
+            if not r or r["mu"] is None:
+                r = aiosqlite.Row(cur._cursor, (player, 0, 0, {}, 0, 0, r["discord_id"] if r else None))
         return await self._row_to_player_info(r)
 
     async def fetch_players(self) -> list[PlayerInfo]:
@@ -478,7 +477,8 @@ class Stats(commands.Cog):
         elif player.hidden == "cheated":
             embed = discord.Embed(description=f"### {title}\nThis player's profile is hidden because they were found to have played illegitimately.")
         else:
-            embed = discord.Embed(description=f"### {title}\nRated {player.ordinal():.0f} (#{player.rank:,})")
+            rated = f"Rated {player.ordinal():.0f} (#{player.rank:,})" if player.rank else "Not rated"
+            embed = discord.Embed(description=f"### {title}\n{rated}")
             embed.add_field(name="Winrates", value=textwrap.dedent(f"""
                 - Overall {player.winrate_in(Part.ALL)}
                 - Town {player.winrate_in(Part.TOWN)}

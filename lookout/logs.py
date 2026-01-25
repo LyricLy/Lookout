@@ -78,6 +78,9 @@ class Gamelogs(commands.Cog):
                 tears.append((attach, "Contains neutrals"))
                 continue
 
+            for player in game.players:
+                await self.bot.db.execute("INSERT OR IGNORE INTO Names VALUES (?, (SELECT COALESCE(MAX(player), 0) + 1 FROM Names))", (player.account_name,))
+
             row = (gist_of(game), digest, message_count, game, gamelogs.version)
             try:
                 await self.bot.db.execute("INSERT INTO Games (gist, from_log, message_count, analysis, analysis_version) VALUES (?, ?, ?, ?, ?)", row)
