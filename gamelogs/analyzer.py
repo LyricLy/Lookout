@@ -53,7 +53,7 @@ class ResultAnalyzer(Analyzer[GameResult]):
         self.hunt_reached = None
         self.in_trib = False
         self.trial_period = False
-        self.time = 1, "day"
+        self.time = DayTime()
         self.modifiers = []
         self.death_popped = False
         self.draw_tomorrow = False
@@ -70,7 +70,7 @@ class ResultAnalyzer(Analyzer[GameResult]):
         player = self.players[who]
         if not player.died:
             self.draw_tomorrow = False
-            player.died = (self.time[0]-1, "night") if last_night else self.time
+            player.died = DayTime(self.time.day-1, Time.NIGHT) if last_night else self.time
 
     def get_message(self, message: Message) -> None:
         match message:
@@ -110,13 +110,13 @@ class ResultAnalyzer(Analyzer[GameResult]):
             case DayStart(1):
                 self.judge_miscoloured_townies()
             case DayStart(n):
-                self.time = n, "day"
+                self.time = DayTime(n, Time.DAY)
                 self.trial_period = False
                 for dc in self.dced:
                     self.kill(dc, last_night=True)
                 self.dced.clear()
             case NightStart(n):
-                self.time = n, "night"
+                self.time = DayTime(n, Time.NIGHT)
                 self.death_popped = False
                 self.in_trib = False
             case LeftTown(who, _):
@@ -129,7 +129,7 @@ class ResultAnalyzer(Analyzer[GameResult]):
                     them.won = True
             case HuntWarning(days_left):
                 if not self.hunt_reached:
-                    self.hunt_reached = self.time[0] + days_left - 3
+                    self.hunt_reached = self.time.in_days(days_left - 3)
             case Tribunal():
                 self.in_trib = True
             case Disconnect(who):
@@ -151,6 +151,7 @@ class ResultAnalyzer(Analyzer[GameResult]):
         if len(self.players) < 5:
             raise NotLogError("input is not a gamelog")
 
+        outcome = Outcome.NORMAL
         victor = unknown
 
         in_game = set([x.ending_ident.faction for x in self.players.values() if not x.died])
@@ -164,12 +165,15 @@ class ResultAnalyzer(Analyzer[GameResult]):
         if victor == unknown:
             if self.death_popped:
                 # Death win
+                outcome = Outcome.DEATH
                 victor = apocalypse
-            elif self.hunt_reached == self.time[0] - 3:
+            elif self.time.in_days(-3) == self.hunt_reached:
                 # hunt win
+                outcome = Outcome.TT_COUNTDOWN
                 victor = coven
             elif self.draw_tomorrow:
                 # draw, no deaths
+                outcome = Outcome.NO_DEATHS
                 victor = None
             elif (
                 in_game == {town, coven} and
@@ -193,6 +197,7 @@ class ResultAnalyzer(Analyzer[GameResult]):
                 for hm in self.players.values():
                     if hm.ending_ident.role.name == "Hex Master":
                         if not hm.died or any([not x.died and is_evil_raiser(x.ending_ident) for x in self.players.values()]):
+                            outcome = Outcome.HEX_BOMB
                             victor = coven
                         break
 
@@ -200,4 +205,4 @@ class ResultAnalyzer(Analyzer[GameResult]):
             if player.ending_ident.faction == victor:
                 player.won = True
 
-        return GameResult(tuple(self.players.values()), victor, self.hunt_reached, self.modifiers, self.vip, self.time)
+        return GameResult(tuple(self.players.values()), victor, self.hunt_reached, self.modifiers, self.vip, self.time, outcome)

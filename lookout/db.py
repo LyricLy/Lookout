@@ -16,8 +16,7 @@ class JIdentity(TypedDict):
     role: str
     faction: str | None
 
-# reversed froom gamelogs.Time
-Time = tuple[Literal["day", "night"], int]
+JDayTime = tuple[Literal["day", "night"], int]
 
 class JPlayer(TypedDict):
     number: int
@@ -37,6 +36,9 @@ class JGameResult(TypedDict):
     ended: Time
 
 
+def ser_day_time(daytime: gamelogs.DayTime) -> JDayTime:
+    return (daytime.time.name.lower(), daytime.day)
+
 def ser_faction(faction: gamelogs.Faction | None) -> str | None:
     return repr(faction) if faction else None
 
@@ -53,7 +55,7 @@ def ser_player(player: gamelogs.Player) -> JPlayer:
         "account_name": player.account_name,
         "starting_ident": ser_ident(player.starting_ident),
         "ending_ident": ser_ident(player.ending_ident),
-        "died": (player.died[1], player.died[0]) if player.died else None,
+        "died": ser_day_time(player.died) if player.died else None,
         "won": player.won,
     }
 
@@ -61,12 +63,16 @@ def ser_game_result(game: gamelogs.GameResult) -> JGameResult:
     return {
         "players": [ser_player(p) for p in game.players],
         "victor": repr(game.victor) if game.victor else None,
-        "hunt_reached": game.hunt_reached,
+        "hunt_reached": game.hunt_reached.day if game.hunt_reached else None,
         "modifiers": game.modifiers,
         "vip": game.vip.number - 1 if game.vip else None,
-        "ended": (game.ended[1], game.ended[0]),
+        "ended": ser_day_time(game.ended),
+        "outcome": game.outcome.value,
     }
 
+
+def de_day_time(daytime: JDayTime) -> gamelogs.DayTime:
+    return gamelogs.DayTime(daytime[1], gamelogs.Time[daytime[0].upper()])
 
 def de_faction(faction: str | None) -> gamelogs.Faction | None:
     return getattr(gamelogs, faction) if faction else None  # type: ignore
@@ -84,7 +90,7 @@ def de_player(player: JPlayer) -> gamelogs.Player:
         player["account_name"],
         de_ident(player["starting_ident"]),
         de_ident(player["ending_ident"]),
-        (player["died"][1], player["died"][0]) if player["died"] else None,
+        de_day_time(player["died"]) if player["died"] else None,
         player["won"],
     )
 
@@ -92,10 +98,11 @@ def de_game_result(game: JGameResult) -> gamelogs.GameResult:
     return gamelogs.GameResult(
         (players := tuple(map(de_player, game["players"]))),
         de_faction(game["victor"]),
-        game["hunt_reached"],
+        gamelogs.DayTime(game["hunt_reached"]) if game["hunt_reached"] else None,
         game["modifiers"],
         players[game["vip"]] if game["vip"] is not None else None,
-        (game["ended"][1], game["ended"][0]),
+        de_day_time(game["ended"]),
+        gamelogs.Outcome(outcome) if (outcome := game.get("outcome")) else gamelogs.Outcome.NORMAL,
     )
 
 

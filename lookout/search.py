@@ -239,7 +239,7 @@ class SearchResults(discord.ui.Container):
     underfile = discord.ui.TextDisplay("")
 
     def __init__(self, bot: Lookout, results: list[gamelogs.GameResult]) -> None:
-        super().__init__(accent_colour=discord.Colour(0xeb4034))
+        super().__init__()
         self.bot = bot
         self.results = results
         self.page = 0
@@ -254,17 +254,24 @@ class SearchResults(discord.ui.Container):
         async with self.bot.db.execute("SELECT filename, clean_content, message_id FROM Gamelogs INNER JOIN Games ON hash = from_log WHERE gist = ?", (gist_of(game),)) as cur:
             filename, content, message_id = await cur.fetchone()  # type: ignore
 
-        match game.victor == gamelogs.town, bool(game.hunt_reached):
-            case True, True:
+        self.accent_colour = discord.Colour(0x06e00c if game.victor == gamelogs.town else 0xb545ff)
+        match game.victor == gamelogs.town, bool(game.hunt_reached), game.outcome == gamelogs.Outcome.HEX_BOMB:
+            case _, False, True:
+                outcome = "Hex bomb • Coven wins"
+                thumbnail = "hex_bomb.png"
+            case _, True, True:
+                outcome = "Hex bomb in hunt • Coven wins"
+                thumbnail = "hex_bomb_hunt.png"
+            case True, True, _:
                 outcome = "TT died in hunt • Town wins"
                 thumbnail = "town_wins_hunt.png"
-            case True, False:
+            case True, False, _:
                 outcome = "Coven obliterated • Town wins"
                 thumbnail = "town_wins.png"
-            case False, True:
+            case False, True, _:
                 outcome = "TT survived hunt • Coven wins"
                 thumbnail = "coven_wins_hunt.png"
-            case False, False:
+            case False, False, _:
                 outcome = "Town eliminated • Coven wins"
                 thumbnail = "coven_wins.png"
 

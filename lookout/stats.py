@@ -188,7 +188,7 @@ class TopPaginator(discord.ui.Container):
     display = discord.ui.TextDisplay("")
 
     def __init__(self, players: Iterable[PlayerInfo], part: Criterion) -> None:
-        super().__init__(accent_colour=discord.Colour(0x6bfc03))
+        super().__init__(accent_colour=discord.Colour(0xfce703))
         self.part: Criterion = part
         self.players = sorted(players, key=self.key, reverse=True)
         self.per_page = 15
@@ -270,26 +270,6 @@ class TopPaginator(discord.ui.Container):
         self.remove_item(self.ar)
 
 
-class TopPaginatorView(discord.ui.LayoutView):
-    message: discord.Message
-
-    def __init__(self, owner: discord.User | discord.Member, players: Iterable[PlayerInfo], part: Criterion) -> None:
-        super().__init__()
-        self.owner = owner
-        self.container = TopPaginator(players, part)
-        self.add_item(self.container)
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user != self.owner:
-            await interaction.response.send_message("You can't control this element.", ephemeral=True)
-            return False
-        return True
-
-    async def on_timeout(self):
-        self.container.destroy()
-        await self.message.edit(view=self)
-
-
 class Stats(commands.Cog):
     """Player statistics."""
 
@@ -333,7 +313,7 @@ class Stats(commands.Cog):
                     key, = await cur.fetchone()  # type: ignore
 
                 # update winrates
-                saw_hunt = game.hunt_reached and (not player.died or player.died >= (game.hunt_reached, "day"))
+                saw_hunt = game.hunt_reached and (not player.died or player.died >= game.hunt_reached)
                 if player.ending_ident.faction == gamelogs.town:
                     c = RoleClass.TOWN_HUNT if saw_hunt else RoleClass.TOWN
                 elif player.ending_ident.role.default_faction == gamelogs.coven:
@@ -392,7 +372,7 @@ class Stats(commands.Cog):
                 embed = discord.Embed(
                     title=f"{last_update.strftime('%B %-d') if last_update.year == next_update.year else last_update.strftime('%B %-d %Y')} - {next_update.strftime('%B %-d %Y')}",
                     description="\n".join(changes),
-                    colour=discord.Colour.dark_purple(),
+                    colour=discord.Colour(0xd18411),
                 )
                 report_channel = self.bot.get_partial_messageable(config.report_channel_id)
                 await report_channel.send(embed=embed)
