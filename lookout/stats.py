@@ -365,7 +365,7 @@ class Stats(commands.Cog):
                 new = await self.fetch_discord_players()
                 changes = []
                 for old_you, new_you in zip(old, new):
-                    if not new_you.user or old_you.rating == new_you.rating:
+                    if not new_you.user or old_you.winrates == new_you.winrates:
                         continue
                     recents = new_you.winrate_in(Part.ALL) - old_you.winrate_in(Part.ALL)
                     changes.append(f"{new_you.user.mention} {old_you.ordinal():.0f} -> {new_you.ordinal():.0f} (W-L {recents.s}-{recents.n-recents.s})")
