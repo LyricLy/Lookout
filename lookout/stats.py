@@ -383,7 +383,7 @@ class Stats(commands.Cog):
                 await asyncio.sleep(10)
 
     async def _row_to_player_info(self, r: aiosqlite.Row) -> PlayerInfo:
-        async with self.bot.db.execute("SELECT name FROM Names WHERE player = ?", (r["player"],)) as cur:
+        async with self.bot.db.execute("SELECT name FROM Names WHERE player = ? ORDER BY LENGTH(name), name", (r["player"],)) as cur:
             names = await cur.fetchall()
         hidden = None
         if r["rank"] is None:
