@@ -121,7 +121,7 @@ KEYWORDS = {
     "town": lambda ident: ident.faction == gamelogs.town,
     "green": lambda ident: ident.faction == gamelogs.town,
     "purple": lambda ident: ident.faction == gamelogs.coven,
-    "tt": lambda ident: ident.faction == gamelogs.coven and ident.role.default_faction == gamelogs.town,
+    "tt": lambda ident: ident.is_wrong_faction(),
     **{n: lambda ident, rs=rs: ident.role in rs for n, rs in BUCKETS.items()},
 }
 
@@ -281,11 +281,11 @@ class SearchResults(discord.ui.Container):
             death = "-#"*bool(player.died)
             obsc = ('\u200b'*obscure).join
             role = f"{player.starting_ident.role} {player.ending_ident.role}" if player.starting_ident != player.ending_ident else f"{player.starting_ident.role}"
-            faction = " (TT)"*(player.starting_ident.role.default_faction != player.starting_ident.faction)
+            faction = " (TT)"*player.starting_ident.is_wrong_faction()
             rollout.append(f"{death} - [{player.number}] {obsc(player.game_name)} ({obsc(player.account_name)}) - {bold}{role}{faction}{bold}")
 
-        self.display.children[0].content = f"Uploaded {discord.utils.format_dt(discord.utils.snowflake_time(message_id), 'D')}\n{outcome}\n{'\n'.join(rollout)}"
-        self.display.accessory.media = f"{config.base_url}/static/{thumbnail}"
+        self.display.children[0].content = f"Uploaded {discord.utils.format_dt(discord.utils.snowflake_time(message_id), 'D')}\n{outcome}\n{'\n'.join(rollout)}"  # type: ignore
+        self.display.accessory.media = f"{config.base_url}/static/{thumbnail}"  # type: ignore
         self.file.media = self.file_obj = discord.File(io.BytesIO(content.encode()), filename=filename)
         self.underfile.content = f"-# Result {self.page+1} of {len(self.results)}"
 

@@ -16,6 +16,7 @@ extensions = [
     "..logs",
     "..stats",
     "..search",
+    "..gaming",
 ]
 
 
