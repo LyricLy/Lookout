@@ -27,6 +27,7 @@ class ReglePanel(discord.ui.Container):
             gamelogs.bucket_of[i.role] == "Coven Deception",
             gamelogs.bucket_of[i.role],
             i.role.name,
+            p.account_name,
         ))
         lines = []
         for player in players:
