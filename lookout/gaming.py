@@ -64,6 +64,7 @@ class ReglePanel(discord.ui.Container):
         await self.bot.db.execute("INSERT INTO RegleGames (player_id, guessed, correct, gist) VALUES (?, ?, ?, ?)", (interaction.user.id, repr(guess), repr(self.game.victor), gist_of(self.game)))
         await self.bot.db.commit()
 
+        self.view.stop()
         await interaction.response.edit_message(view=self.view, attachments=[file])
 
     @ar.button(label="Town", emoji=config.town_emoji, style=discord.ButtonStyle.grey)
