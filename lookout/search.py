@@ -320,7 +320,7 @@ class SearchResults(discord.ui.Container):
 class SearchQuery(commands.FlagConverter):
     chat: list[str] = []
     author: list[PlayerSpecifier] = commands.flag(name="from", default=[])
-    has: list[PlayerSpecifier] = []
+    has: list[PlayerSpecifier] = commands.flag(default=[], positional=True)
     before: DateRange | None = None
     during: DateRange | None = None
     after: DateRange | None = None
