@@ -37,7 +37,7 @@ class ReglePanel(discord.ui.Container):
             else:
                 emoji = config.bucket_emoji[gamelogs.bucket_of[player.starting_ident.role]]
                 role = player.starting_ident
-            lines.append(f"{emoji} {player.account_name} - {role}")
+            lines.append(f"{emoji} {('\u200b'*obscure).join(player.account_name)} - {role}")
         self.display.children[0].content = f"# {header}\n{'\n'.join(lines)}"  # type: ignore
 
     ar = discord.ui.ActionRow()
@@ -45,7 +45,7 @@ class ReglePanel(discord.ui.Container):
     async def finish(self, guess: gamelogs.Faction, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         self.accent_colour = discord.Colour(0x06e00c if self.game.victor == gamelogs.town else 0xb545ff)
         thumbnail = "town_wins.png" if self.game.victor == gamelogs.town else "coven_wins.png"
-        self.display.accessory.media = f"{config.base_url}/static/{thumbnail}"
+        self.display.accessory.media = f"{config.base_url}/static/{thumbnail}"  # type: ignore
         correct = self.game.victor == guess
         button.style = discord.ButtonStyle.green if correct else discord.ButtonStyle.red
         self.end("Correct!" if correct else "Aw...")
