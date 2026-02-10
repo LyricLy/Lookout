@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import re
 import sre_parse as sp
 from collections import defaultdict

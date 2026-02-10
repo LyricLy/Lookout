@@ -19,7 +19,7 @@ from openskill.models import PlackettLuce, PlackettLuceRating
 import config
 from .bot import Lookout
 from .logs import gist_of
-from .utils import ContainerView
+from .views import ViewContainer, ContainerView
 
 
 log = logging.getLogger(__name__)
@@ -131,19 +131,23 @@ class PlayerInfo:
     async def convert(cls, ctx: commands.Context, argument: str) -> PlayerInfo:
         async with ctx.bot.db.execute("SELECT player FROM Names WHERE name = ?", (argument,)) as cur:
             r = await cur.fetchone()
+
         if not r:
             try:
                 member = await commands.MemberConverter().convert(ctx, argument)
             except commands.MemberNotFound:
                 await ctx.send(f"I don't know the player '{argument}'.")
                 raise commands.BadArgument()
+
             else:
                 async with ctx.bot.db.execute("SELECT player FROM DiscordConnections WHERE discord_id = ?", (member.id,)) as cur:
                     r = await cur.fetchone()
                 if not r:
                     await ctx.send(f"I don't know what {member.mention}'s ToS2 account is.")
                     raise commands.BadArgument()
-        return await ctx.bot.get_cog("Stats").fetch_player(r[0])
+
+        stats: Stats = ctx.bot.get_cog("Stats")
+        return await stats.fetch_player(r[0])
 
 @dataclass
 class PlayerStats:
@@ -184,7 +188,7 @@ class Jump(discord.ui.Modal):
         await interaction.response.edit_message(view=self.container.view)
 
 
-class TopPaginator(discord.ui.Container):
+class TopPaginator(ViewContainer):
     display = discord.ui.TextDisplay("")
 
     def __init__(self, players: Iterable[PlayerInfo], part: Criterion) -> None:

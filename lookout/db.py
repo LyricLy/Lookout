@@ -1,22 +1,24 @@
-from __future__ import annotations
-
 import datetime
-import pathlib
+import os
 import re
+import logging
+import importlib
 from sqlite3 import PARSE_DECLTYPES
-from typing import TypedDict, Literal
+from typing import TypedDict, Callable, Awaitable
 
 import aiosqlite
 import msgpack
-
 import gamelogs
+
+
+log = logging.getLogger(__name__)
 
 
 class JIdentity(TypedDict):
     role: str
     faction: str | None
 
-JDayTime = tuple[Literal["day", "night"], int]
+JDayTime = tuple[str, int]
 
 class JPlayer(TypedDict):
     number: int
@@ -24,7 +26,7 @@ class JPlayer(TypedDict):
     account_name: str
     starting_ident: JIdentity
     ending_ident: JIdentity
-    died: Time | None
+    died: JDayTime | None
     won: bool 
 
 class JGameResult(TypedDict):
@@ -33,7 +35,8 @@ class JGameResult(TypedDict):
     hunt_reached: int | None
     modifiers: list[str]
     vip: int | None
-    ended: Time
+    ended: JDayTime
+    outcome: int
 
 
 def ser_day_time(daytime: gamelogs.DayTime) -> JDayTime:
@@ -106,17 +109,30 @@ def de_game_result(game: JGameResult) -> gamelogs.GameResult:
     )
 
 
-VALID_MIGRATION_REGEX = re.compile(r"v(\d+).*\.sql")
-MIGRATION_PATH = pathlib.Path("migrations")
+VALID_MIGRATION_REGEX = re.compile(r"(v(\d+).*)\.(sql|py)")
+MIGRATION_DIR = "migrations"
+type Migration = Callable[[aiosqlite.Connection], Awaitable[None]]
 
-def get_migrations() -> list[pathlib.Path]:
-    l = [(int(m[1]), p) for p in MIGRATION_PATH.iterdir() if (m := VALID_MIGRATION_REGEX.fullmatch(p.name))]
+def get_migration(name: str) -> tuple[int, Migration] | None:
+    m = VALID_MIGRATION_REGEX.fullmatch(name)
+    if not m:
+        return None
+    if m[3] == "sql":
+        async def migrate(db: aiosqlite.Connection) -> None:
+            with open(f"{MIGRATION_DIR}/{name}") as f:
+                script = f.read()
+            await db.executescript(script)
+    else:
+        migrate = importlib.import_module(f"{MIGRATION_DIR}.{m[1]}").migrate
+    return int(m[2]), migrate
+
+def get_migrations() -> list[Migration]:
+    l = [m for p in os.listdir(MIGRATION_DIR) if (m := get_migration(p))]
     l.sort(key=lambda t: t[0])
     return [x for _, x in l]
 
 async def connect(path: str) -> aiosqlite.Connection:
-    db = await aiosqlite.connect(path, detect_types=PARSE_DECLTYPES)
-    await db.execute("PRAGMA foreign_keys = ON")
+    db = await aiosqlite.connect(path, detect_types=PARSE_DECLTYPES, autocommit=False)
     db.row_factory = aiosqlite.Row
 
     aiosqlite.register_adapter(gamelogs.GameResult, lambda game: msgpack.packb(ser_game_result(game)))
@@ -129,14 +145,22 @@ async def connect(path: str) -> aiosqlite.Connection:
     current_version, = await (await db.execute("PRAGMA user_version")).fetchone()  # type: ignore
     migrations = get_migrations()
     for n in range(current_version, len(migrations)):
-        with open(migrations[n]) as f:
-            script = f.read()
+        log.info("migrating database from version %d to %d", n, n+1)
+        await db.executescript("COMMIT; PRAGMA foreign_keys = OFF; BEGIN")
+
         try:
-            await db.executescript(f"BEGIN; PRAGMA defer_foreign_keys = true; {script} COMMIT;")
+            await migrations[n](db)
         except aiosqlite.Error as e:
             raise RuntimeError(f"failed to migrate database from version {n} to {n+1}") from e
-        else:
-            await db.execute(f"PRAGMA user_version = {n + 1}")
-            await db.commit()
 
+        async with db.execute("PRAGMA foreign_key_check") as cur:
+            r = await cur.fetchone()
+        if r:
+            raise RuntimeError(f"foreign key violation when migrating database from version {n} to {n+1}: {r[0]} has a dangling reference to {r[2]} (rowid {r[1]}, constraint {r[3]})")
+
+        await db.execute(f"PRAGMA user_version = {n + 1}")
+        await db.commit()
+
+    await db.executescript("COMMIT; PRAGMA foreign_keys = ON; BEGIN DEFERRED")
+    log.info("database connected")
     return db

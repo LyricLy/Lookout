@@ -8,11 +8,11 @@ from discord.ext import commands
 
 import config
 from .bot import Lookout
-from .logs import gist_of
-from .utils import ContainerView
+from .logs import Gamelogs, gist_of
+from .views import ViewContainer, ContainerView
 
 
-class ReglePanel(discord.ui.Container):
+class ReglePanel(ViewContainer):
     display = discord.ui.Section("", accessory=discord.ui.Thumbnail(f"{config.base_url}/static/who_wins.png"))
     sep = discord.ui.Separator(spacing=discord.SeparatorSpacing.large)
 
@@ -45,9 +45,8 @@ class ReglePanel(discord.ui.Container):
     ar = discord.ui.ActionRow()
 
     async def finish(self, guess: gamelogs.Faction, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        async with self.bot.db.execute("SELECT filename, clean_content, message_id FROM Gamelogs INNER JOIN Games ON hash = from_log WHERE gist = ?", (gist_of(self.game),)) as cur:
-            filename, content, message_id = await cur.fetchone()  # type: ignore
-        file = discord.File(io.BytesIO(content.encode()), filename=filename)
+        logs: Gamelogs = self.bot.get_cog("Gamelogs")  # type: ignore
+        log = await logs.fetch_log(self.game)
 
         self.accent_colour = discord.Colour(0x06e00c if self.game.victor == gamelogs.town else 0xb545ff)
         thumbnail = "town_wins.png" if self.game.victor == gamelogs.town else "coven_wins.png"
@@ -56,16 +55,17 @@ class ReglePanel(discord.ui.Container):
         correct = self.game.victor == guess
         button.style = discord.ButtonStyle.green if correct else discord.ButtonStyle.red
         header = "Correct!" if correct else "Aw..."
-        self.end(f"{header}\nUploaded {discord.utils.format_dt(discord.utils.snowflake_time(message_id), 'D')}")
+        self.end(f"{header}\nUploaded {log.format_upload_time()}")
 
         # disgusting
-        self._children.insert(self._children.index(self.sep), discord.ui.File(file))
+        self.add_item(log.to_item())
+        self._children.insert(self._children.index(self.sep), self._children.pop())
 
         await self.bot.db.execute("INSERT INTO RegleGames (player_id, guessed, correct, gist) VALUES (?, ?, ?, ?)", (interaction.user.id, repr(guess), repr(self.game.victor), gist_of(self.game)))
         await self.bot.db.commit()
 
-        self.view.stop()
-        await interaction.response.edit_message(view=self.view, attachments=[file])
+        self.view.stop()  # type: ignore
+        await interaction.response.edit_message(**self.edit_args())
 
     @ar.button(label="Town", emoji=config.town_emoji, style=discord.ButtonStyle.grey)
     async def guess_town(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:

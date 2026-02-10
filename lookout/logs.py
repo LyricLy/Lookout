@@ -1,7 +1,11 @@
 from __future__ import annotations
 
-import logging
+import datetime
 import hashlib
+import logging
+import re
+import io
+from dataclasses import dataclass
 from typing import TypedDict, Literal
 
 import aiosqlite
@@ -11,14 +15,21 @@ from discord.ext import commands
 
 import config
 from .bot import Lookout
+from .views import File
 
 
 log = logging.getLogger(__name__)
 
+
 def gist_of(game: gamelogs.GameResult) -> str:
     return ",".join(f"{player.game_name}/{player.account_name}/{player.ending_ident.role}" for player in game.players)
 
+def datetime_of_filename(filename: str) -> datetime.datetime | None:
+    if m := re.fullmatch(r".*-(\d{4}-\d{2}-\d{2}-\d{2}-\d{2}).html", filename):
+        return datetime.datetime.strptime(m[1], "%Y-%m-%d-%H-%M")
+
 btos2_roles = {"Pacifist", "Banshee", "Warlock", "Inquisitor", "Auditor", "Judge", "Starspawn", "Jackal"}
+
 # close enough, welcome back Go errors
 def parse_game(text: str) -> tuple[tuple[gamelogs.GameResult, int] | None, str | None]:
     try:
@@ -32,11 +43,59 @@ def parse_game(text: str) -> tuple[tuple[gamelogs.GameResult, int] | None, str |
         return None, f'Unknown role "{name}"{" (BToS2 is not supported)"*(name in btos2_roles)}'
 
 
+@dataclass
+class Gamelog:
+    content: str
+    filename: str
+    url: str | None
+    first_upload: datetime.datetime
+
+    def format_upload_time(self) -> str:
+        return discord.utils.format_dt(self.first_upload, 'D')
+
+    def to_item(self) -> discord.ui.Item:
+        if self.url is None:
+            return File(discord.File(io.BytesIO(self.content.encode()), filename=self.filename))
+        else:
+            return discord.ui.TextDisplay(self.url)
+
+
 class Gamelogs(commands.Cog):
     """Gamelog tracking."""
 
     def __init__(self, bot: Lookout) -> None:
         self.bot = bot
+
+    async def message_exists(self, channel_id: int, message_id: int) -> bool:
+        if (a := config.message_exists(channel_id, message_id)) is not None:
+            return a
+
+        channel = self.bot.get_channel(channel_id)
+        if not isinstance(channel, discord.TextChannel):
+            return False
+
+        try:
+            await channel.fetch_message(message_id)
+        except discord.NotFound:
+            return False
+
+        return True
+
+    async def fetch_log(self, game: gamelogs.GameResult) -> Gamelog:
+        async with self.bot.db.execute(
+            "SELECT Best.*, First.message_id as first_message_id FROM Games INNER JOIN Gamelogs AS Best ON Best.hash = from_log INNER JOIN Gamelogs AS First ON First.hash = first_log WHERE gist = ?",
+            (gist_of(game),),
+        ) as cur:
+            r = await cur.fetchone()
+        if r is None:
+            raise ValueError("game not found")
+
+        if await self.message_exists(r["channel_id"], r["message_id"]):
+            url = f"https://cdn.discordapp.com/attachments/{r['channel_id']}/{r['attachment_id']}/{r['filename']}"
+        else:
+            url = None
+
+        return Gamelog(r["clean_content"], r["filename"], url, discord.utils.snowflake_time(r["first_message_id"]))
 
     async def see_message(self, message: discord.Message, *, cry: bool = False) -> tuple[int, list[str]]:
         tears = []
@@ -57,8 +116,8 @@ class Gamelogs(commands.Cog):
 
             digest = hashlib.sha256(clean_content.encode()).hexdigest()
             await self.bot.db.execute(
-                "INSERT OR IGNORE INTO Gamelogs (hash, filename, message_id, attachment_id, uploader, clean_content) VALUES (?, ?, ?, ?, ?, ?)",
-                (digest, attach.filename, message.id, attach.id, message.author.id, clean_content),
+                "INSERT OR IGNORE INTO Gamelogs (hash, filename, channel_id, message_id, attachment_id, filename_time, uploader, clean_content) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (digest, attach.filename, message.channel.id, message.id, attach.id, datetime_of_filename(attach.filename), message.author.id, clean_content),
             )
             await self.bot.db.commit()
 
@@ -81,13 +140,19 @@ class Gamelogs(commands.Cog):
             for player in game.players:
                 await self.bot.db.execute("INSERT OR IGNORE INTO Names VALUES (?, (SELECT COALESCE(MAX(player), 0) + 1 FROM Names))", (player.account_name,))
 
-            row = (gist_of(game), digest, message_count, game, gamelogs.version)
+            gist = gist_of(game)
+            row = (gist, digest, message_count, game, gamelogs.version)
             try:
-                await self.bot.db.execute("INSERT INTO Games (gist, from_log, message_count, analysis, analysis_version) VALUES (?, ?, ?, ?, ?)", row)
+                await self.bot.db.execute("INSERT INTO Games (gist, from_log, first_log, message_count, analysis, analysis_version) VALUES (?1, ?2, ?2, ?3, ?4, ?5)", row)
             except aiosqlite.IntegrityError:
-                await self.bot.db.execute("UPDATE Games SET from_log = ?2, message_count = ?3, analysis = ?4, analysis_version = ?5 WHERE gist = ?1", row)
+                async with self.bot.db.execute("SELECT message_count FROM Games WHERE gist = ?", (gist,)) as cur:
+                    existing_count, = await cur.fetchone()  # type: ignore
+                if message_count >= existing_count:
+                    await self.bot.db.execute("UPDATE Games SET from_log = ?2, message_count = ?3, analysis = ?4, analysis_version = ?5 WHERE gist = ?1", row)
             else:
                 c += 1
+
+            await self.bot.db.execute("UPDATE Gamelogs SET game = ? WHERE hash = ?", (gist, digest))
             await self.bot.db.commit()
 
         return c, tears

@@ -13,9 +13,9 @@ from discord.ext import commands
 
 import config
 from .bot import Lookout
-from .logs import gist_of
+from .logs import Gamelogs, gist_of
 from .stats import Stats, PlayerInfo
-from .utils import ContainerView
+from .views import ViewContainer, ContainerView
 
 
 RE_OPTIONS = re.Options()
@@ -229,12 +229,11 @@ class Jump(discord.ui.Modal):
                 return
             self.container.go_to_page(page)
         await self.container.draw()
-        await interaction.response.edit_message(view=self.container.view, attachments=[self.container.file_obj])
+        await interaction.response.edit_message(**self.container.edit_args())
 
 
-class SearchResults(discord.ui.Container):
+class SearchResults(ViewContainer):
     display = discord.ui.Section("", accessory=discord.ui.Thumbnail(""))
-    file = discord.ui.File("")
     sep = discord.ui.Separator(spacing=discord.SeparatorSpacing.large)
     underfile = discord.ui.TextDisplay("")
 
@@ -244,6 +243,7 @@ class SearchResults(discord.ui.Container):
         self.results = results
         self.page = 0
         self.next.disabled = len(results) == 1
+        self.file = None
 
     def has_page(self, num: int) -> bool:
         return 0 <= num < len(self.results)
@@ -251,8 +251,8 @@ class SearchResults(discord.ui.Container):
     async def draw(self, *, obscure: bool = False) -> None:
         game = self.results[self.page]
 
-        async with self.bot.db.execute("SELECT filename, clean_content, message_id FROM Gamelogs INNER JOIN Games ON hash = from_log WHERE gist = ?", (gist_of(game),)) as cur:
-            filename, content, message_id = await cur.fetchone()  # type: ignore
+        logs: Gamelogs = self.bot.get_cog("Gamelogs")  # type: ignore
+        log = await logs.fetch_log(game)
 
         self.accent_colour = discord.Colour(0x06e00c if game.victor == gamelogs.town else 0xb545ff)
         match game.victor == gamelogs.town, bool(game.hunt_reached), game.outcome == gamelogs.Outcome.HEX_BOMB:
@@ -284,9 +284,15 @@ class SearchResults(discord.ui.Container):
             faction = " (TT)"*player.starting_ident.is_wrong_faction()
             rollout.append(f"{death} - [{player.number}] {obsc(player.game_name)} ({obsc(player.account_name)}) - {bold}{role}{faction}{bold}")
 
-        self.display.children[0].content = f"Uploaded {discord.utils.format_dt(discord.utils.snowflake_time(message_id), 'D')}\n{outcome}\n{'\n'.join(rollout)}"  # type: ignore
+        if self.file:
+            self.file._update_view(None)  # the library doesn't do this...?
+            self.remove_item(self.file)
+        self.file = log.to_item()
+        self.add_item(self.file)
+        self._children.insert(self._children.index(self.sep), self._children.pop())
+
+        self.display.children[0].content = f"Uploaded {log.format_upload_time()}\n{outcome}\n{'\n'.join(rollout)}"  # type: ignore
         self.display.accessory.media = f"{config.base_url}/static/{thumbnail}"  # type: ignore
-        self.file.media = self.file_obj = discord.File(io.BytesIO(content.encode()), filename=filename)
         self.underfile.content = f"-# Result {self.page+1} of {len(self.results)}"
 
     def go_to_page(self, num: int) -> None:
@@ -300,13 +306,13 @@ class SearchResults(discord.ui.Container):
     async def previous(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         self.go_to_page(self.page - 1)
         await self.draw()
-        await interaction.response.edit_message(view=self.view, attachments=[self.file_obj])
+        await interaction.response.edit_message(**self.edit_args())
 
     @ar.button(label="Next", emoji="➡️")
     async def next(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         self.go_to_page(self.page + 1)
         await self.draw()
-        await interaction.response.edit_message(view=self.view, attachments=[self.file_obj])
+        await interaction.response.edit_message(**self.edit_args())
 
     @ar.button(label="Jump", emoji="↪️")
     async def jump(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -364,8 +370,6 @@ class Search(commands.Cog):
         hunt:
         Find games that did (`yes`) or did not (`no`) reach hunt.
         """
-        stats: Stats = self.bot.get_cog("Stats")  # type: ignore
-
         results = []
         patterns = [text[1:-1] if len(text) >= 2 and text[0] == text[-1] == "/" else fr"\b{re.escape(text)}\b" for text in query.chat]
 
@@ -379,6 +383,7 @@ class Search(commands.Cog):
         if query.after:
             where.append(f"{approx_date} > '{query.after.stop}'")
 
+        stats: Stats = self.bot.get_cog("Stats")  # type: ignore
         async for game in stats.games(" AND ".join(where)):
             if query.victor is not None and (query.victor == "town") != (game.victor == gamelogs.town):
                 continue
@@ -413,7 +418,7 @@ class Search(commands.Cog):
         results.reverse()
         view = ContainerView(ctx.author, SearchResults(self.bot, results))
         await view.container.draw()
-        view.message = await ctx.send(view=view, file=view.container.file_obj)
+        view.message = await ctx.send(**view.send_args())
 
 
 async def setup(bot: Lookout):
