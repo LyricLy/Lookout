@@ -249,7 +249,7 @@ class Search(commands.Cog):
 
         for spec in query.has:
             c, p2 = spec.to_sql()
-            joins.append(f"INNER JOIN (SELECT game AS gist FROM Appearances WHERE {c}) USING (gist)")
+            joins.append(f"INNER JOIN (SELECT DISTINCT game AS gist FROM Appearances WHERE {c}) USING (gist)")
             p.update(p2)
 
         if query.author:
