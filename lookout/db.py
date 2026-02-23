@@ -166,6 +166,14 @@ async def connect(path: str) -> aiosqlite.Connection:
         await db.execute(f"PRAGMA user_version = {n + 1}")
         await db.commit()
 
-    await db.executescript("COMMIT; PRAGMA foreign_keys = ON; BEGIN DEFERRED")
+    await db.executescript("""
+        COMMIT;
+        PRAGMA foreign_keys = ON;
+        PRAGMA journal_mode = WAL;
+        PRAGMA busy_timeout = 5000;
+        PRAGMA synchronous = NORMAL;
+        PRAGMA cache_size = -128000;
+        BEGIN DEFERRED
+    """)
     log.info("database connected")
     return db
