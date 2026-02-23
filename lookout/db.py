@@ -7,8 +7,8 @@ from sqlite3 import PARSE_DECLTYPES
 from typing import TypedDict, Callable, Awaitable
 
 import aiosqlite
-import msgpack
 import gamelogs
+import msgpack
 
 
 log = logging.getLogger(__name__)
@@ -131,12 +131,17 @@ def get_migrations() -> list[Migration]:
     l.sort(key=lambda t: t[0])
     return [x for _, x in l]
 
+
 async def connect(path: str) -> aiosqlite.Connection:
     db = await aiosqlite.connect(path, detect_types=PARSE_DECLTYPES, autocommit=False)
     db.row_factory = aiosqlite.Row
 
     aiosqlite.register_adapter(gamelogs.GameResult, lambda game: msgpack.packb(ser_game_result(game)))
     aiosqlite.register_converter("GAME", lambda data: de_game_result(msgpack.unpackb(data)))
+    aiosqlite.register_adapter(gamelogs.Role, lambda role: role.name)
+    aiosqlite.register_converter("ROLE", lambda s: gamelogs.by_name[s.decode()])
+    aiosqlite.register_adapter(gamelogs.Faction, ser_faction)
+    aiosqlite.register_converter("FACTION", lambda s: de_faction(s.decode()))
     aiosqlite.register_adapter(dict, msgpack.packb)
     aiosqlite.register_converter("MSGPACK", msgpack.unpackb)
     aiosqlite.register_adapter(datetime.datetime, datetime.datetime.isoformat)

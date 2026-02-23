@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 import re
 import io
@@ -60,8 +58,8 @@ class Blacklist(commands.Cog):
         await asyncio.sleep(1)
         await self.check_thread(thread)
 
-        async with self.bot.db.execute("SELECT EXISTS(SELECT 1 FROM BlacklistGames WHERE thread_id = ?)", (thread.id,)) as cur:
-            exists, = await cur.fetchone()  # type: ignore
+        async with self.bot.db.execute("SELECT 1 FROM BlacklistGames WHERE thread_id = ?", (thread.id,)) as cur:
+            exists = await cur.fetchone()
         if not exists:
             await thread.add_tags(discord.Object(id=config.no_logs_tag))
 

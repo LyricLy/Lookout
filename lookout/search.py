@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import calendar
 import datetime
 import io
@@ -14,168 +12,13 @@ from discord.ext import commands
 import config
 from .bot import Lookout
 from .logs import Gamelogs, gist_of
+from .specifiers import IdentitySpecifier, PlayerSpecifier, BUCKETS
 from .stats import Stats, PlayerInfo
 from .views import ViewContainer, ContainerView
 
 
 RE_OPTIONS = re.Options()
 RE_OPTIONS.case_sensitive = False
-RE_OPTIONS.never_capture = True
-
-ROLES = [r for r in gamelogs.by_name.values() if r.default_faction in (gamelogs.town, gamelogs.coven)]
-
-ROLE_ALIASES = {
-    "ti": "town investigative",
-    "tk": "town killing",
-    "tpow": "town power",
-    "tp": "town protective",
-    "ts": "town support",
-    "to": "town outlier",
-    "ct": "common town",
-    "rt": "random town",
-
-    "cd": "coven deception",
-    "ck": "coven killing",
-    "cpow": "coven power",
-    "cu": "coven utility",
-    "co": "coven outlier",
-    "cc": "common coven",
-    "rc": "random coven",
-    "cov": "random coven",
-    "coven": "random coven",
-
-    "coro": "coroner",
-    "inv": "investigator",
-    "invest": "investigator",
-    "lo": "lookout",
-    "psy": "psychic",
-    "sher": "sheriff",
-
-    "dep": "deputy",
-    "trick": "trickster",
-    "vet": "veteran",
-    "vig": "vigilante",
-    "vigi": "vigilante",
-
-    "marsh": "marshal",
-    "mayo": "mayor",
-    "mon": "monarch",
-    "pros": "prosecutor",
-
-    "bg": "bodyguard",
-    "cler": "cleric",
-    "crus": "crusader",
-    "orac": "oracle",
-
-    "admi": "admirer",
-    "adm": "admirer",
-    "amne": "amnesiac",
-    "ret": "retributionist",
-    "retri": "retributionist",
-    "soc": "socialite",
-    "soci": "socialite",
-    "tav": "tavern keeper",
-
-    "cata": "catalyst",
-    "pil": "pilgrim",
-
-    "dw": "dreamweaver",
-    "ench": "enchanter",
-    "illu": "illusionist",
-    "dusa": "medusa",
-
-    "conj": "conjurer",
-    "rit": "ritualist",
-
-    "cl": "coven leader",
-    "hex": "hex master",
-    "hm": "hex master",
-
-    "necro": "necromancer",
-    "pois": "poisoner",
-    "pm": "potion master",
-    "vm": "voodoo master",
-    "wild": "wildling",
-    "wl": "wildling",
-
-    "cult": "cultist",
-}
-
-STRICT_BUCKETS = {
-    **{b.casefold(): set(rs) for b, rs in gamelogs.by_bucket.items()},
-    "common town": {r for r in ROLES if r.default_faction == gamelogs.town and gamelogs.bucket_of[r] != "Town Power"},
-    "random town": {r for r in ROLES if r.default_faction == gamelogs.town},
-    "common coven": {r for r in ROLES if r.default_faction == gamelogs.coven and gamelogs.bucket_of[r] not in ("Coven Killing", "Coven Power")},
-    "random coven": {r for r in ROLES if r.default_faction == gamelogs.coven},
-}
-
-BUCKETS = {
-    **{r.name.lower(): {r} for r in ROLES},
-    **STRICT_BUCKETS,
-}
-
-for a, b in ROLE_ALIASES.items():
-    BUCKETS[a] = BUCKETS[b]
-
-KEYWORDS = {
-    "town": lambda ident: ident.faction == gamelogs.town,
-    "green": lambda ident: ident.faction == gamelogs.town,
-    "purple": lambda ident: ident.faction == gamelogs.coven,
-    "tt": lambda ident: ident.is_wrong_faction(),
-    **{n: lambda ident, rs=rs: ident.role in rs for n, rs in BUCKETS.items()},
-}
-
-@dataclass
-class PlayerSpecifier:
-    names: set[str] | None
-    ign: str | None
-    idents: set[gamelogs.Identity]
-
-    def matches(self, player: gamelogs.Player) -> bool:
-        return (self.names is None or player.account_name.casefold() in self.names) and (self.ign is None or player.game_name == self.ign) and (player.starting_ident in self.idents or player.ending_ident in self.idents)
-
-    @classmethod
-    async def convert(cls, ctx: commands.Context, argument: str) -> PlayerSpecifier:
-        names = None
-        ign = None
-        idents = []
-        for role in ROLES:
-            idents.append(gamelogs.Identity(role))
-            if role.default_faction == gamelogs.town:
-                idents.append(gamelogs.Identity(role, gamelogs.coven))
-
-        words = argument.split()
-        while words:
-            for izer in (lambda l: (-l, None), lambda l: (None, l)):
-                for kw, f in KEYWORDS.items():
-                    kw_parts = kw.split()
-                    i, j = izer(len(kw_parts))
-                    if [w.lower() for w in words[i:j]] == kw_parts and 0 < len(n := [ident for ident in idents if f(ident)]) < len(idents):
-                        idents = n
-                        del words[i:j]
-                        break
-                else:
-                    continue
-                break
-            else:
-                for i, word in reversed(list(enumerate(words))):
-                    if word.startswith("ign:"):
-                        ign = " ".join([word.removeprefix("ign:"), *words[i+1:]]).strip()
-                        del words[i:]
-                        break
-                if not words:
-                    break
-
-                name = " ".join(words)
-                if name.startswith("account:"):
-                    names = {name.removeprefix("account:").strip().casefold()}
-                elif name:
-                    player = await PlayerInfo.convert(ctx, name)
-                    names = {name.casefold() for name in player.names}
-
-                break
-
-        return cls(names, ign, set(idents))
 
 
 @dataclass
@@ -190,8 +33,7 @@ class DateRange:
 
         m = re.fullmatch(r"(\d{4})(?:-(\d{1,2})(?:-(\d{1,2}))?)?", argument)
         if not m:
-            await ctx.send(f"Unknown date '{argument}'.")
-            raise commands.BadArgument()
+            raise commands.BadArgument(f"Unknown date '{argument}'.")
         match [n and int(n) for n in m.groups()]:
             case [year, None, None]:
                 return DateRange(datetime.date(year, 1, 1), datetime.date(year, 12, 31))
@@ -332,6 +174,8 @@ class SearchQuery(commands.FlagConverter):
     after: DateRange | None = None
     victor: Literal["town", "coven"] | None = commands.flag(aliases=["winner", "won"], default=None)
     hunt: bool | None = None
+    team: tuple[PlayerInfo, ...] = ()
+    count: list[tuple[int, str]] = []
 
 
 class Search(commands.Cog):
@@ -348,6 +192,7 @@ class Search(commands.Cog):
 
         has:
         Filter games with certain players, roles, or both. For instance, "has: Danman34682", "has: tt jailor", or "has: phoin rit".
+        The `hunt` and `won` keywords require that the player reached hunt or won the game, respectively.
         May be used multiple times, in which case all clauses must apply.
         Prefix names with `account:` to find a literal account name without further processing, or `ign:` to search in-game names.
 
@@ -369,48 +214,104 @@ class Search(commands.Cog):
 
         hunt:
         Find games that did (`yes`) or did not (`no`) reach hunt.
-        """
-        results = []
-        patterns = [text[1:-1] if len(text) >= 2 and text[0] == text[-1] == "/" else fr"\b{re.escape(text)}\b" for text in query.chat]
 
-        # holy absymal dogshit
-        approx_date = "(SELECT approx_date FROM Gamelogs WHERE hash = from_log)"
+        team:
+        Require that all listed players appear on the same team.
+
+        count:
+        Look for games with a minimum number of a given role or alignment.
+        """
+        joins = []
         where = []
+        p = {}
+
+        approx_date = "(SELECT approx_date FROM Gamelogs WHERE hash = first_log)"
         if query.before:
-            where.append(f"{approx_date} < '{query.before.start}'")
+            where.append(f"{approx_date} < :before")
+            p["before"] = query.before.start
         if query.during:
-            where.append(f"{approx_date} >= '{query.during.start}' AND {approx_date} <= '{query.during.stop}'")
+            where.append(f"{approx_date} >= :start AND {approx_date} <= :stop")
+            p["start"] = query.during.start
+            p["stop"] = query.during.stop
         if query.after:
-            where.append(f"{approx_date} > '{query.after.stop}'")
+            where.append(f"{approx_date} > :after")
+            p["after"] = query.after.stop
+
+        if query.victor:
+            where.append(f"victor = :victor")
+            p["victor"] = query.victor
+
+        if query.hunt is not None:
+            where.append(f"hunt_reached = :hunt")
+            p["hunt"] = query.hunt
+
+        for spec in query.has:
+            c, p2 = spec.to_sql()
+            joins.append(f"INNER JOIN (SELECT game AS gist FROM Appearances WHERE {c}) USING (gist)")
+            p.update(p2)
+
+        if query.author:
+            arms = []
+            for spec in query.author:
+                c, p2 = spec.to_sql()
+                arms.append(f"EXISTS(SELECT 1 FROM Appearances WHERE game = gist AND {c})")
+                p.update(p2)
+            where.append(" OR ".join(arms))
+
+        if query.team:
+            for i, player in enumerate(query.team):
+                joins.append(f"INNER JOIN (SELECT game AS gist, faction FROM Appearances WHERE player = :team_{i}) AS Team{i} USING (gist)")
+                p[f"team_{i}"] = player.id
+                if i:
+                    where.append(f"Team{i}.faction = Team0.faction")
+
+        for i, (count, bucket_name) in enumerate(query.count):
+            if count < 0:
+                raise commands.BadArgument("Count cannot be negative.")
+            bucket = BUCKETS.get(bucket_name.lower())
+            if not bucket:
+                raise commands.BadArgument(f"Unknown bucket name '{bucket_name}'.")
+
+            c, p2 = IdentitySpecifier(roles=list(bucket), only_starting=True).to_sql()
+            where.append(f"(SELECT COUNT(*) >= :count_{i} FROM Appearances WHERE game = gist AND {c})")
+            p[f"count_{i}"] = count
+            p.update(p2)
 
         stats: Stats = self.bot.get_cog("Stats")  # type: ignore
-        async for game in stats.games(" AND ".join(where)):
-            if query.victor is not None and (query.victor == "town") != (game.victor == gamelogs.town):
-                continue
+        cur = stats.games(f"{' '.join(joins)} WHERE {' AND '.join(where) if where else '1'}", p)
 
-            if query.hunt is not None and bool(game.hunt_reached) != query.hunt:
-                continue
+        if query.chat:
+            patterns = []
+            for text in query.chat:
+                pattern = text[1:-1] if len(text) >= 2 and text[0] == text[-1] == "/" else fr"\b{re.escape(text)}\b"
+                patterns.append(fr'<span class=".*">(?<author>.*)</span>\n<span>: .*{pattern}.*</span>|<span style=".*">(?<author_dead>.*)</span>\n<span style=".*">: .*{pattern}.*</i></span>')
 
-            if not all([any([spec.matches(player) for player in game.players]) for spec in query.has]):
-                continue
-
-            if query.author and not any([any([spec.matches(player) for player in game.players]) for spec in query.author]):
-                continue
-
-            if query.chat:
+            results = []
+            async for game in cur:
                 async with self.bot.db.execute("SELECT clean_content FROM Gamelogs INNER JOIN Games ON hash = from_log WHERE gist = ?", (gist_of(game),)) as cur:
                     content, = await cur.fetchone()  # type: ignore
 
-                valid_authors = "|".join(re.escape(player.game_name) for player in game.players if not query.author or any([spec.matches(player) for spec in query.author]))
-                valid_dash_authors = valid_authors.replace(" ", "-")
+                for pattern in patterns:
+                    for m in re.finditer(pattern, content, RE_OPTIONS):
+                        if not query.author:
+                            break
 
-                if not all([re.search(
-                    fr'<span class=".*">({valid_authors})</span>\n<span>: .*{pattern}.*</span>|<span style=".*">({valid_dash_authors})</span>\n<span style=".*">: .*{pattern}.*</i></span>',
-                    content, RE_OPTIONS,
-                ) for pattern in patterns]):
-                    continue
+                        try:
+                            if m["author"]:
+                                author = next(player for player in game.players if player.game_name == m["author"])
+                            else:
+                                author = next(player for player in game.players if player.game_name.replace(" ", "-") == m["author_dead"])
+                        except StopIteration:
+                            continue
 
-            results.append(game)
+                        if any([await spec.matches(game, author) for spec in query.author]):
+                            break
+                    else:
+                        break
+                else:
+                    results.append(game)
+        else:
+            results = [game async for game in cur]
 
         if not results:
             await ctx.send("No results.")

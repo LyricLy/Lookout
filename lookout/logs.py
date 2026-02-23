@@ -1,12 +1,10 @@
-from __future__ import annotations
-
 import datetime
 import hashlib
 import logging
 import re
 import io
 from dataclasses import dataclass
-from typing import TypedDict, Literal
+from typing import Iterator, Self
 
 import aiosqlite
 import discord
@@ -25,7 +23,7 @@ def gist_of(game: gamelogs.GameResult) -> str:
     return ",".join(f"{player.game_name}/{player.account_name}/{player.ending_ident.role}" for player in game.players)
 
 def datetime_of_filename(filename: str) -> datetime.datetime | None:
-    if m := re.fullmatch(r".*-(\d{4}-\d{2}-\d{2}-\d{2}-\d{2}).html", filename):
+    if m := re.fullmatch(r"(?:.*-)?(\d{4}-\d{2}-\d{2}-\d{2}-\d{2}).*\.html", filename):
         return datetime.datetime.strptime(m[1], "%Y-%m-%d-%H-%M")
 
 btos2_roles = {"Pacifist", "Banshee", "Warlock", "Inquisitor", "Auditor", "Judge", "Starspawn", "Jackal"}
@@ -43,15 +41,38 @@ def parse_game(text: str) -> tuple[tuple[gamelogs.GameResult, int] | None, str |
         return None, f'Unknown role "{name}"{" (BToS2 is not supported)"*(name in btos2_roles)}'
 
 
+@dataclass(order=True)
+class Timecode:
+    message_id: int
+    filename_time: datetime.datetime
+
+    def to_datetime(self) -> datetime.datetime:
+        return discord.utils.snowflake_time(self.message_id)
+
+    @classmethod
+    def from_datetime(cls, dt: datetime.datetime) -> Self:
+        return cls(discord.utils.time_snowflake(dt), datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc))
+
+    @classmethod
+    def from_str(cls, s: str) -> Self:
+        return cls(int(s[:16], 16), datetime.datetime.fromisoformat(s[16:]))
+
+    def __iter__(self) -> Iterator[object]:
+        return iter((f"{self.message_id:016x}{self.filename_time.isoformat()}",))
+
+    def __str__(self) -> str:
+        return f"{self.to_datetime()}>{self.filename_time}"
+
+
 @dataclass
 class Gamelog:
     content: str
     filename: str
     url: str | None
-    first_upload: datetime.datetime
+    first_upload: Timecode
 
     def format_upload_time(self) -> str:
-        return discord.utils.format_dt(self.first_upload, 'D')
+        return discord.utils.format_dt(self.first_upload.to_datetime(), 'D')
 
     def to_item(self) -> discord.ui.Item:
         if self.url is None:
@@ -82,20 +103,26 @@ class Gamelogs(commands.Cog):
         return True
 
     async def fetch_log(self, game: gamelogs.GameResult) -> Gamelog:
-        async with self.bot.db.execute(
-            "SELECT Best.*, First.message_id as first_message_id FROM Games INNER JOIN Gamelogs AS Best ON Best.hash = from_log INNER JOIN Gamelogs AS First ON First.hash = first_log WHERE gist = ?",
-            (gist_of(game),),
-        ) as cur:
+        async with self.bot.db.execute("""
+            SELECT
+                Best.channel_id, Best.message_id, Best.attachment_id, Best.filename, Best.clean_content,
+                First.message_id, First.filename_time
+            FROM Games
+            INNER JOIN Gamelogs AS Best ON Best.hash = from_log
+            INNER JOIN Gamelogs AS First ON First.hash = first_log
+            WHERE gist = ?
+        """, (gist_of(game),)) as cur:
             r = await cur.fetchone()
         if r is None:
             raise ValueError("game not found")
 
-        if await self.message_exists(r["channel_id"], r["message_id"]):
-            url = f"https://cdn.discordapp.com/attachments/{r['channel_id']}/{r['attachment_id']}/{r['filename']}"
+        channel_id, message_id, attachment_id, filename, content, *timecode = r
+        if await self.message_exists(channel_id, message_id):
+            url = f"https://cdn.discordapp.com/attachments/{channel_id}/{attachment_id}/{filename}"
         else:
             url = None
 
-        return Gamelog(r["clean_content"], r["filename"], url, discord.utils.snowflake_time(r["first_message_id"]))
+        return Gamelog(content, filename, url, Timecode(*timecode))
 
     async def see_message(self, message: discord.Message, *, cry: bool = False) -> tuple[int, list[str]]:
         tears = []
@@ -115,11 +142,16 @@ class Gamelogs(commands.Cog):
                 continue
 
             digest = hashlib.sha256(clean_content.encode()).hexdigest()
+            filename_time = datetime_of_filename(attach.filename)
             await self.bot.db.execute(
                 "INSERT OR IGNORE INTO Gamelogs (hash, filename, channel_id, message_id, attachment_id, filename_time, uploader, clean_content) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (digest, attach.filename, message.channel.id, message.id, attach.id, datetime_of_filename(attach.filename), message.author.id, clean_content),
+                (digest, attach.filename, message.channel.id, message.id, attach.id, filename_time, message.author.id, clean_content),
             )
             await self.bot.db.commit()
+
+            if not filename_time:
+                tears.append((attach, "Filename does not contain date and time"))
+                continue
 
             r, error = parse_game(clean_content)
             if error:
@@ -141,20 +173,22 @@ class Gamelogs(commands.Cog):
                 await self.bot.db.execute("INSERT OR IGNORE INTO Names VALUES (?, (SELECT COALESCE(MAX(player), 0) + 1 FROM Names))", (player.account_name,))
 
             gist = gist_of(game)
-            row = (gist, digest, message_count, game, gamelogs.version)
+            row = (gist, digest, message_count, game, gamelogs.version, game.victor, bool(game.hunt_reached))
             try:
-                await self.bot.db.execute("INSERT INTO Games (gist, from_log, first_log, message_count, analysis, analysis_version) VALUES (?1, ?2, ?2, ?3, ?4, ?5)", row)
+                await self.bot.db.execute("INSERT INTO Games (gist, from_log, first_log, message_count, analysis, analysis_version, victor, hunt_reached) VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, ?7)", row)
             except aiosqlite.IntegrityError:
                 async with self.bot.db.execute("SELECT message_count FROM Games WHERE gist = ?", (gist,)) as cur:
                     existing_count, = await cur.fetchone()  # type: ignore
                 if message_count >= existing_count:
-                    await self.bot.db.execute("UPDATE Games SET from_log = ?2, message_count = ?3, analysis = ?4, analysis_version = ?5 WHERE gist = ?1", row)
+                    await self.bot.db.execute("UPDATE Games SET from_log = ?2, message_count = ?3, analysis = ?4, analysis_version = ?5, victor = ?6, hunt_reached = ?7 WHERE gist = ?1", row)
             else:
                 c += 1
 
             await self.bot.db.execute("UPDATE Gamelogs SET game = ? WHERE hash = ?", (gist, digest))
             await self.bot.db.commit()
 
+        if c:
+            self.bot.dispatch("saw_games")
         return c, tears
 
     @commands.Cog.listener()
@@ -181,6 +215,7 @@ class Gamelogs(commands.Cog):
     @commands.command()
     @commands.is_owner()
     async def gamedump(self, ctx: commands.Context) -> None:
+        """Dump logs from the database into a folder."""
         cache = {}
         async with self.bot.db.execute("SELECT filename, clean_content, uploader FROM Gamelogs") as cur:
             async for filename, content, uploader in cur:

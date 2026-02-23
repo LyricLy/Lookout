@@ -11,7 +11,7 @@ async def migrate(db: aiosqlite.Connection):
     # here goes
     await db.executescript("""
         CREATE TABLE NewGamelogs (
-            hash TEXT PRIMARY KEY,
+            hash TEXT NOT NULL PRIMARY KEY,
             filename TEXT NOT NULL,
             channel_id INTEGER NOT NULL,
             message_id INTEGER NOT NULL,
@@ -24,12 +24,14 @@ async def migrate(db: aiosqlite.Connection):
         );
 
         CREATE TABLE NewGames (
-            gist TEXT PRIMARY KEY,
+            gist TEXT NOT NULL PRIMARY KEY,
             from_log TEXT UNIQUE NOT NULL,
             first_log TEXT UNIQUE NOT NULL,
             message_count INTEGER NOT NULL,
             analysis GAME NOT NULL,
             analysis_version INTEGER NOT NULL,
+            victor FACTION,
+            hunt_reached INTEGER NOT NULL,
             FOREIGN KEY (from_log) REFERENCES NewGamelogs (hash),
             FOREIGN KEY (first_log) REFERENCES NewGamelogs (hash)
         );
@@ -59,12 +61,12 @@ async def migrate(db: aiosqlite.Connection):
                 continue
 
             gist = gist_of(game)
-            game_row = gist, row["hash"], message_count, game, gamelogs.version
+            game_row = gist, row["hash"], message_count, game, gamelogs.version, game.victor, bool(game.hunt_reached)
             if not (c := counts.get(gist)):
-                await db.execute("INSERT INTO NewGames (gist, from_log, first_log, message_count, analysis, analysis_version) VALUES (?1, ?2, ?2, ?3, ?4, ?5)", game_row)
+                await db.execute("INSERT INTO NewGames (gist, from_log, first_log, message_count, analysis, analysis_version, victor, hunt_reached) VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, ?7)", game_row)
                 counts[gist] = message_count
             elif message_count >= c:
-                await db.execute("UPDATE NewGames SET from_log = ?2, message_count = ?3, analysis = ?4, analysis_version = ?5 WHERE gist = ?1", game_row)
+                await db.execute("UPDATE NewGames SET from_log = ?2, message_count = ?3, analysis = ?4, analysis_version = ?5, victor = ?6, hunt_reached = ?7 WHERE gist = ?1", game_row)
                 counts[gist] = message_count
 
             await db.execute("UPDATE NewGamelogs SET game = ? WHERE hash = ?", (gist, row["hash"]))

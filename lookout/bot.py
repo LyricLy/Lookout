@@ -38,6 +38,10 @@ class Lookout(commands.Bot):
             assert ctx.command is not None
             log.exception("In %s:", ctx.command.qualified_name, exc_info=error.original)
             await ctx.send("Unknown error occurred.")
+        elif isinstance(error, commands.BadFlagArgument):
+            await ctx.send(str(error.original))
+        elif isinstance(error, commands.UserInputError):
+            await ctx.send(str(error))
 
     async def setup_hook(self) -> None:
         self.db = await db.connect("the.db")

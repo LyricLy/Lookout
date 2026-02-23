@@ -63,10 +63,10 @@ class Message:
 LAST_N = 7
 def last_n(pattern):
     s = ""
-    for rtype, args in sp.parse(pattern.pattern)[-LAST_N:]:
+    for rtype, args in sp.parse(pattern.pattern)[-LAST_N:]:  # type: ignore
         if rtype != sp.LITERAL:
             return None
-        s += chr(args)
+        s += chr(args)  # type: ignore
     return s
 
 class SystemMessage(Message):

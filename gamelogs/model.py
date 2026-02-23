@@ -7,10 +7,10 @@ from typing import Literal as _Literal
 class Faction:
     name: str
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return self.name.lower().replace(" ", "_")
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.name
 
 unknown = Faction("Unknown")
@@ -29,10 +29,10 @@ class Role:
     name: str
     default_faction: Faction | None
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"by_name[{self.name!r}]"
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.name
 
 by_bucket = {
@@ -150,7 +150,7 @@ class Identity:
     def is_wrong_faction(self) -> bool:
         return self.faction != self.role.default_faction
 
-    def __str__(self):
+    def __str__(self) -> str:
         if self.role.default_faction == self.faction:
             return f"{self.role}"
         else:
@@ -217,5 +217,10 @@ class GameResult:
     ended: DayTime
     outcome: Outcome
 
-    def __str__(self):
+    def saw_hunt(self, player: Player) -> bool:
+        if player not in self.players:
+            raise ValueError("player is not from this game")
+        return bool(self.hunt_reached and (not player.died or player.died >= self.hunt_reached))
+
+    def __str__(self) -> str:
         return "\n".join(map(str, self.players))
