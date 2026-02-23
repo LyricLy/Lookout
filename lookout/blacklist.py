@@ -23,14 +23,18 @@ class Blacklist(commands.Cog):
         self.channel: discord.ForumChannel | None = None
 
     async def check_thread(self, thread: discord.Thread, *, catchup: bool = False) -> None:
-        starter = thread.starter_message or await thread.fetch_message(thread.id)
-        reason = starter.content if starter.content else None
         await self.bot.db.execute("DELETE FROM Blacklists WHERE thread_id = ?", (thread.id,))
+
         if any(t.id in config.damning_tags for t in thread.applied_tags):
+            starter = thread.starter_message or await thread.fetch_message(thread.id)
+            reason = starter.content if starter.content else None
+            no_retrial = any(t.id in config.no_retrial_tags for t in thread.applied_tags)
+
             concerned_players = [r for x in re.split(r",|&|\band\b", thread.name.strip("()").rsplit(":", 1)[-1], flags=re.I) if (r := x.strip()) and not r.isdigit()]
             for player in concerned_players:
                 log.debug("%s is blacklisted in thread %d (reason: %s)", player, thread.id, reason)
-                await self.bot.db.execute("INSERT INTO Blacklists (thread_id, account_name, reason) VALUES (?, ?, ?)", (thread.id, player, reason))
+                await self.bot.db.execute("INSERT INTO Blacklists (thread_id, account_name, reason, no_retrial) VALUES (?, ?, ?, ?)", (thread.id, player, reason, no_retrial))
+
         await self.bot.db.commit()
 
     @commands.Cog.listener()
