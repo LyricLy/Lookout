@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import calendar
 import datetime
+import re
 import io
 from dataclasses import dataclass
 from typing import Literal
 
-import re2 as re
+import re2
 import discord
 import gamelogs
 from discord.ext import commands
@@ -19,7 +20,7 @@ from .stats import Stats, PlayerInfo
 from .views import ViewContainer, ContainerView
 
 
-RE_OPTIONS = re.Options()
+RE_OPTIONS = re2.Options()
 RE_OPTIONS.case_sensitive = False
 
 
@@ -33,7 +34,7 @@ class DateRange:
         if season := SEASONS.get(argument.lower()):
             return season
 
-        m = re.fullmatch(r"(\d{4})(?:-(\d{1,2})(?:-(\d{1,2}))?)?", argument)
+        m = re2.fullmatch(r"(\d{4})(?:-(\d{1,2})(?:-(\d{1,2}))?)?", argument)
         if not m:
             raise commands.BadArgument(f"Unknown date '{argument}'.")
         match [n and int(n) for n in m.groups()]:
@@ -179,6 +180,8 @@ class SearchQuery(commands.FlagConverter):
     team: tuple[PlayerInfo, ...] = ()
     count: list[tuple[int, str]] = []
 
+SearchQuery.__commands_flag_regex__ = re.compile(r"\b" + SearchQuery.__commands_flag_regex__.pattern, SearchQuery.__commands_flag_regex__.flags)
+
 
 class Search(commands.Cog):
     """Searching of games."""
@@ -285,7 +288,7 @@ class Search(commands.Cog):
         if query.chat:
             patterns = []
             for text in query.chat:
-                pattern = text[1:-1] if len(text) >= 2 and text[0] == text[-1] == "/" else fr"\b{re.escape(text)}\b"
+                pattern = text[1:-1] if len(text) >= 2 and text[0] == text[-1] == "/" else fr"\b{re2.escape(text)}\b"
                 patterns.append(fr'<span class=".*">(?<author>.*)</span>\n<span>: .*{pattern}.*</span>|<span style=".*">(?<author_dead>.*)</span>\n<span style=".*">: .*{pattern}.*</i></span>')
 
             results = []
@@ -294,7 +297,7 @@ class Search(commands.Cog):
                     content, = await cur.fetchone()  # type: ignore
 
                 for pattern in patterns:
-                    for m in re.finditer(pattern, content, RE_OPTIONS):
+                    for m in re2.finditer(pattern, content, RE_OPTIONS):
                         if not query.author:
                             break
 
