@@ -135,7 +135,7 @@ class PlayerInfo:
     async def convert(cls, ctx: commands.Context, argument: str) -> PlayerInfo:
         stats: Stats = ctx.bot.get_cog("Stats")
 
-        if player := await stats.fetch_player_by_name(argument, stats.now()):
+        if player := await stats.fetch_player_by_name(argument.replace("\u200b", ""), stats.now()):
             return player
 
         try:

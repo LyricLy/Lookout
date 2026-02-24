@@ -232,12 +232,12 @@ class PlayerSpecifier(IdentitySpecifier):
 
         for i, word in reversed(list(enumerate(words))):
             if word.startswith("ign:"):
-                self.ign = " ".join([word.removeprefix("ign:"), *words[i+1:]]).strip()
+                self.ign = " ".join([word.removeprefix("ign:"), *words[i+1:]]).strip().replace("\u200b", "")
                 del words[i:]
                 break
 
         title = " ".join(words)
         if title.startswith("account:"):
-            self.name = title.removeprefix("account:").strip()
+            self.name = title.removeprefix("account:").strip().replace("\u200b", "")
         elif title:
             self.player = await PlayerInfo.convert(ctx, title)
