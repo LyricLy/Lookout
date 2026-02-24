@@ -204,7 +204,7 @@ class TopPaginator(ViewContainer):
         super().__init__(accent_colour=discord.Colour(0xfce703))
         self.stats = stats
         self.crit: Criterion = crit
-        self.played = isinstance(crit, IdentitySpecifier) and crit.won or played
+        self.played = isinstance(crit, IdentitySpecifier) and crit.won is not None or played
         self.per_page = 15
 
     async def start(self) -> None:
@@ -223,7 +223,7 @@ class TopPaginator(ViewContainer):
         c, p = self.crit.to_sql()
         hidden_clause = "NOT EXISTS(SELECT 1 FROM Hidden WHERE player = Appearances.player) AND "
         if self.played:
-            if not self.crit.won:
+            if self.crit.won is None:
                 hidden_clause = ""
             async with self.stats.bot.db.execute(f"SELECT player, COUNT(*) FROM Appearances WHERE {hidden_clause}{c} GROUP BY player", p) as cur:
                 return [(await self.stats.fetch_player(player, self.stats.now(), with_rank=False), c) async for player, c in cur]
@@ -265,7 +265,7 @@ class TopPaginator(ViewContainer):
             else:
                 return ""
 
-        match self.crit.hunt, "won" if self.crit.won else "played" if self.played else None:
+        match self.crit.hunt, "won" if self.crit.won else "lost" if self.crit.won == False else "played" if self.played else None:
             case None, None:
                 return f"Sorting by winrate as {n}. Confidence intervals are ordered by lower bound, not the centre."
             case None, p:

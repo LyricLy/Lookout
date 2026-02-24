@@ -113,7 +113,8 @@ KEYWORDS: dict[str, Filter] = {
     "green": lambda spec: spec.with_faction(gamelogs.town),
     "purple": lambda spec: spec.with_faction(gamelogs.coven),
     "tt": lambda spec: spec.where(lambda role: role.default_faction == gamelogs.town).with_faction(gamelogs.coven),
-    "won": lambda spec: replace(spec, won=True),
+    "won": lambda spec: spec.with_won(True),
+    "lost": lambda spec: spec.with_won(False),
     "hunt": lambda spec: replace(spec, hunt=True),
     **{n: lambda spec, rs=rs: spec.where(lambda role: role in rs) for n, rs in BUCKETS.items()},
 }
@@ -164,6 +165,11 @@ class IdentitySpecifier:
             return type(self)([])
         r = replace(self, faction=faction)
         return r.where(lambda r: r.default_faction == gamelogs.town) if faction == gamelogs.town else r
+
+    def with_won(self, won: bool) -> Self:
+        if self.won is not None and won != self.won:
+            return type(self)([])
+        return replace(self, won=won)
 
     async def finish_parsing(self, ctx: commands.Context, words: list[str]) -> None:
         if words:
