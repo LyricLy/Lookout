@@ -1,12 +1,61 @@
 import logging
+from collections import defaultdict
+from typing import Any
 
+import aiosqlite
 import discord
 from discord.ext import commands
+from jishaku.features import sql
 
 from . import db
 
 
 log = logging.getLogger(__name__)
+
+
+@sql.adapter(aiosqlite.Connection)
+class AiosqliteConnectionAdapter(sql.Adapter[aiosqlite.Connection]):
+    connection: aiosqlite.Connection
+
+    def info(self) -> str:
+        return f"aiosqlite {aiosqlite.__version__} Connection"
+
+    async def fetchrow(self, query: str) -> dict[str, Any]:
+        async with self.connector.execute(query) as cur:
+            row = await cur.fetchone()
+        return dict(row) if row else None  # type: ignore
+
+    async def fetch(self, query: str) -> list[dict[str, Any]]:
+        async with self.connector.execute(query) as cur:
+            return [dict(row) async for row in cur]
+
+    async def execute(self, query: str) -> str:
+        async with self.connector.execute(query) as cur:
+            return str(cur.rowcount)
+
+    async def table_summary(self, table_query: str | None) -> dict[str, dict[str, str]]:
+        tables = defaultdict(dict)
+
+        if table_query:
+            names = [table_query]
+        else:
+            async with self.connector.execute("SELECT name FROM sqlite_master WHERE type = 'table'") as cur:
+                names = [name async for name, in cur]
+
+        for name in names:
+            async with self.connector.execute("SELECT name, type, `notnull`, dflt_value, pk FROM pragma_table_info(?)", (name,)) as cur:
+                async for row in cur:
+                    tables[name][row["name"]] = self.format_column_row(row)
+
+        return tables
+
+    def format_column_row(self, row: aiosqlite.Row) -> str:
+        not_null = " NOT NULL"*row["notnull"]
+        default = row["dflt_value"]
+        default_value = f" DEFAULT {default}" if default else ""
+        primary_key = " PRIMARY KEY"*bool(row["pk"])
+        return f"{row['type']}{not_null}{default_value}{primary_key}"
+
 
 extensions = [
     "jishaku",
