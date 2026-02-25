@@ -1,4 +1,4 @@
-import io
+import random
 
 import discord
 import gamelogs
@@ -91,7 +91,8 @@ class Gaming(commands.Cog):
     @commands.command()
     async def regle(self, ctx: commands.Context) -> None:
         """Guess which faction won a game, given only the lineup."""
-        async with self.bot.db.execute("SELECT analysis FROM Games LIMIT 1 OFFSET ABS(RANDOM()) % (SELECT COUNT(*) FROM Games)") as cur:
+        victor = random.choice([gamelogs.town, gamelogs.coven])
+        async with self.bot.db.execute("SELECT analysis FROM Games WHERE victor = ?1 LIMIT 1 OFFSET ABS(RANDOM()) % (SELECT COUNT(*) FROM Games WHERE victor = ?1)", (victor,)) as cur:
             game, = await cur.fetchone()  # type: ignore
         view = ContainerView(ctx.author, ReglePanel(self.bot, game))
         view.message = await ctx.send(view=view)
