@@ -64,8 +64,12 @@ class ResultAnalyzer(Analyzer[GameResult]):
                 player.ending_ident.faction = coven
                 self.modifiers.append("Town Traitor")
 
-    def kill(self, who: str, *, last_night: bool = False) -> None:
+    def kill(self, who: str, *, hanged: bool = False, last_night: bool = False) -> None:
         player = self.players[who]
+        if hanged:
+            player.hanged = True
+            if player.ending_ident.role.name == "Jester":
+                player.won = True
         if not player.died:
             self.draw_tomorrow = False
             player.died = DayTime(self.time.day-1, Time.NIGHT) if last_night else self.time
@@ -95,16 +99,14 @@ class ResultAnalyzer(Analyzer[GameResult]):
                 self.kill(who)
             case Upped(who):
                 if self.in_trib:
-                    self.kill(who)
+                    self.kill(who, hanged=True)
             case NightDeath(who):
                 self.kill(who, last_night=True)
             case DayDeath(who):
                 self.kill(who)
             case FoundGuilty(who):
                 player = self.players[who]
-                if player.ending_ident.role.name == "Jester":
-                    player.won = True
-                self.kill(who)
+                self.kill(who, hanged=True)
             case DayStart(1):
                 self.judge_miscoloured_townies()
             case DayStart(n):

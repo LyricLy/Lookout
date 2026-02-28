@@ -29,6 +29,7 @@ class JPlayer(TypedDict):
     ending_ident: JIdentity
     died: JDayTime | None
     won: bool 
+    hanged: bool
 
 class JGameResult(TypedDict):
     players: list[JPlayer]
@@ -61,6 +62,7 @@ def ser_player(player: gamelogs.Player) -> JPlayer:
         "ending_ident": ser_ident(player.ending_ident),
         "died": ser_day_time(player.died) if player.died else None,
         "won": player.won,
+        "hanged": player.hanged,
     }
 
 def ser_game_result(game: gamelogs.GameResult) -> JGameResult:
@@ -96,6 +98,7 @@ def de_player(player: JPlayer) -> gamelogs.Player:
         de_ident(player["ending_ident"]),
         de_day_time(player["died"]) if player["died"] else None,
         player["won"],
+        player.get("hanged", False),
     )
 
 def de_game_result(game: JGameResult) -> gamelogs.GameResult:
@@ -161,7 +164,7 @@ async def connect(path: str) -> aiosqlite.Connection:
         except aiosqlite.Error as e:
             raise RuntimeError(f"failed to migrate database from version {n} to {n+1}") from e
 
-        if await (await db.execute("PRAGMA foreign_key_check")).fetchone():
+        if r := await (await db.execute("PRAGMA foreign_key_check")).fetchone():
             raise RuntimeError(f"foreign key violation when migrating database from version {n} to {n+1}: {r[0]} has a dangling reference to {r[2]} (rowid {r[1]}, constraint {r[3]})")
 
         await db.execute(f"PRAGMA user_version = {n + 1}")

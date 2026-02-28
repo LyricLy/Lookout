@@ -195,6 +195,7 @@ class Player:
     ending_ident: Identity = _field(compare=False)
     died: DayTime | None = _field(compare=False, default=None)
     won: bool = _field(compare=False, default=False)
+    hanged: bool = _field(compare=False, default=False)
 
     def __str__(self):
         ident = f"{self.ending_ident}" if self.starting_ident == self.ending_ident else f"{self.ending_ident} (originally {self.starting_ident})"
