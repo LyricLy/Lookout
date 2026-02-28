@@ -23,6 +23,8 @@ from .views import ViewContainer, ContainerView
 RE_OPTIONS = re2.Options()
 RE_OPTIONS.case_sensitive = False
 
+FOOTNOTES = "*†‡§‖¶"
+
 
 @dataclass
 class DateRange:
@@ -120,6 +122,12 @@ class SearchResults(ViewContainer):
                 outcome = "Town eliminated • Coven wins"
                 thumbnail = "coven_wins.png"
 
+        bl_threads = []
+        async for thread_id, in await self.bot.db.execute("SELECT thread_id FROM BlacklistGames WHERE gist = ?", (gist_of(game),)):
+            players = [name async for name, in await self.bot.db.execute("SELECT account_name FROM Blacklists WHERE thread_id = ?", (thread_id,))]
+            bl_threads.append((thread_id, players))
+        bl_section = "".join(f"\n\\{FOOTNOTES[i]} Player blacklisted for this game: <#{thread_id}>" for i, (thread_id, _) in enumerate(bl_threads))
+
         rollout = []
         for player in game.players:
             bold = "**"*player.won
@@ -127,7 +135,8 @@ class SearchResults(ViewContainer):
             obsc = ('\u200b'*obscure).join
             role = f"{player.starting_ident.role} {player.ending_ident.role}" if player.starting_ident != player.ending_ident else f"{player.starting_ident.role}"
             faction = " (TT)"*player.starting_ident.is_wrong_faction()
-            rollout.append(f"{death} - [{player.number}] {obsc(player.game_name)} ({obsc(player.account_name)}) - {bold}{role}{faction}{bold}")
+            mark = FOOTNOTES[bl[0]] if (bl := discord.utils.find(lambda t: player.account_name in t[1][1], enumerate(bl_threads))) else ""
+            rollout.append(f"{death} - [{player.number}] {obsc(player.game_name)} ({obsc(player.account_name)}{mark}) - {bold}{role}{faction}{bold}")
 
         if self.file:
             self.file._update_view(None)  # the library doesn't do this...?
@@ -136,7 +145,7 @@ class SearchResults(ViewContainer):
         self.add_item(self.file)
         self._children.insert(self._children.index(self.sep), self._children.pop())
 
-        self.display.children[0].content = f"Uploaded {log.format_upload_time()}\n{outcome}\n{'\n'.join(rollout)}"  # type: ignore
+        self.display.children[0].content = f"Uploaded {log.format_upload_time()}\n{outcome}\n{'\n'.join(rollout)}{bl_section}"  # type: ignore
         self.display.accessory.media = f"{config.base_url}/static/{thumbnail}"  # type: ignore
         self.underfile.content = f"-# Result {self.page+1} of {len(self.results)}"
 

@@ -54,7 +54,9 @@ class Blacklist(commands.Cog):
             await self.check_thread(thread, catchup=True)
 
         # removals
-        await self.bot.db.execute(f"DELETE FROM Blacklists WHERE thread_id NOT IN ({','.join(map(str, seen))})")
+        keep_ids = ",".join(map(str, seen))
+        await self.bot.db.execute(f"DELETE FROM Blacklists WHERE thread_id NOT IN ({keep_ids})")
+        await self.bot.db.execute(f"DELETE FROM BlacklistGames WHERE thread_id NOT IN ({keep_ids})")
         await self.bot.db.commit()
 
     @commands.Cog.listener()
