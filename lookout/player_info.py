@@ -42,7 +42,7 @@ class PlayerInfo:
             member = await commands.MemberConverter().convert(ctx, argument)
         except commands.MemberNotFound:
             r = await (await stats.bot.db.execute("SELECT word FROM FuzzyNames WHERE word MATCH ? AND top = 1", (argument.rstrip("*"),))).fetchone()
-            did_you_mean = f"\nDid you mean '{r[0]}'?" if r else ""
+            did_you_mean = f"\nDid you mean {r[0]}?" if r else ""
 
             raise commands.BadArgument(f"I don't know the player '{argument}'.{did_you_mean}")
 
