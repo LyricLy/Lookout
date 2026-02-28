@@ -89,6 +89,9 @@ class Lookout(commands.Bot):
             await ctx.send("Unknown error occurred.")
         elif isinstance(error, commands.BadFlagArgument):
             await ctx.send(str(error.original))
+        elif isinstance(error, commands.BadUnionArgument):
+            errors = [str(e) for e in error.errors if not isinstance(e, commands.BadLiteralArgument)]
+            await ctx.send("\n".join(errors))
         elif isinstance(error, commands.UserInputError):
             await ctx.send(str(error))
 

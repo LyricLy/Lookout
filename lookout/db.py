@@ -7,6 +7,7 @@ from sqlite3 import PARSE_DECLTYPES
 from typing import TypedDict, Callable, Awaitable
 
 import aiosqlite
+import sqlite_spellfix
 import gamelogs
 import msgpack
 
@@ -135,6 +136,8 @@ def get_migrations() -> list[Migration]:
 async def connect(path: str) -> aiosqlite.Connection:
     db = await aiosqlite.connect(path, detect_types=PARSE_DECLTYPES, autocommit=False)
     db.row_factory = aiosqlite.Row
+    await db.enable_load_extension(True)
+    await db.load_extension(sqlite_spellfix.extension_path())  # type: ignore
 
     aiosqlite.register_adapter(gamelogs.GameResult, lambda game: msgpack.packb(ser_game_result(game)))
     aiosqlite.register_converter("GAME", lambda data: de_game_result(msgpack.unpackb(data)))

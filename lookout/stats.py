@@ -12,11 +12,12 @@ import aiosqlite
 import discord
 import gamelogs
 from discord.ext import commands
-from openskill.models import PlackettLuce, PlackettLuceRating
+from openskill.models import PlackettLuce
 
 import config
 from .bot import Lookout
 from .logs import gist_of, Timecode, Gamelogs
+from .player_info import PlayerInfo
 from .specifiers import PURE_BUCKETS, ROLES, IdentitySpecifier
 from .views import ViewContainer, ContainerView
 
@@ -94,61 +95,6 @@ class Winrate:
 class DisplayablePlayer(Protocol):
     async def names(self) -> list[str]: ...
     async def user(self) -> discord.User | None: ...
-
-@dataclass
-class PlayerInfo:
-    id: int
-    rank: int
-    rating: PlackettLuceRating
-    _stats: Stats = field(repr=False, compare=False, kw_only=True)
-
-    def ordinal(self) -> float:
-        return self.rating.ordinal(target=1000, alpha=21)
-
-    async def winrate_in(self, spec: IdentitySpecifier = IdentitySpecifier()) -> Winrate:
-        c, p = spec.to_sql()
-        async with self._stats.bot.db.execute(f"SELECT COALESCE(SUM(won), 0), COUNT(*) FROM Appearances WHERE player = :player AND {c}", {"player": self.id, **p}) as cur:
-            s, n = await cur.fetchone()  # type: ignore
-        return Winrate(s, n)
-
-    async def played_in(self, spec: IdentitySpecifier = IdentitySpecifier()) -> int:
-        c, p = spec.to_sql()
-        async with self._stats.bot.db.execute(f"SELECT COUNT(*) FROM Appearances WHERE player = :player AND {c}", {"player": self.id, **p}) as cur:
-            n, = await cur.fetchone()  # type: ignore
-        return n
-
-    async def names(self) -> list[str]:
-        async with self._stats.bot.db.execute("SELECT name FROM Names WHERE player = ? ORDER BY LENGTH(name), name", (self.id,)) as cur:
-            return [r[0] async for r in cur]
-
-    async def hidden(self) -> Literal["user", "cheated"] | None: 
-        async with self._stats.bot.db.execute("SELECT why FROM Hidden WHERE player = ?", (self.id,)) as cur:
-            r = await cur.fetchone()
-        return r[0] if r else None
-
-    async def user(self) -> discord.User | None:
-        async with self._stats.bot.db.execute("SELECT discord_id FROM DiscordConnections WHERE player = ?", (self.id,)) as cur:
-            r = await cur.fetchone()
-        return self._stats.bot.get_user(r[0]) if r else None
-
-    @classmethod
-    async def convert(cls, ctx: commands.Context, argument: str) -> PlayerInfo:
-        stats: Stats = ctx.bot.get_cog("Stats")
-
-        if player := await stats.fetch_player_by_name(argument.replace("\u200b", ""), stats.now()):
-            return player
-
-        try:
-            member = await commands.MemberConverter().convert(ctx, argument)
-        except commands.MemberNotFound:
-            raise commands.BadArgument(f"I don't know the player '{argument}'.")
-
-        async with ctx.bot.db.execute("SELECT player FROM DiscordConnections WHERE discord_id = ?", (member.id,)) as cur:
-            r = await cur.fetchone()
-        if not r:
-            raise commands.BadArgument(f"I don't know what {member.mention}'s ToS2 account is.")
-
-        return await stats.fetch_player(r[0], stats.now())
 
 @dataclass
 class ReglePlayerInfo:
@@ -524,6 +470,12 @@ class Stats(commands.Cog):
 
         await ctx.send(embed=embed)
 
+    async def winrate_in(self, player: PlayerInfo, spec: IdentitySpecifier = IdentitySpecifier()) -> Winrate:
+        c, p = spec.to_sql()
+        async with self.bot.db.execute(f"SELECT COALESCE(SUM(won), 0), COUNT(*) FROM Appearances WHERE player = :player AND {c}", {"player": player.id, **p}) as cur:
+            s, n = await cur.fetchone()  # type: ignore
+        return Winrate(s, n)
+
     @commands.command()
     async def player(self, ctx: commands.Context, *, player: PlayerInfo) -> None:
         """Show information about a player."""
@@ -541,7 +493,7 @@ class Stats(commands.Cog):
         name_string = ", ".join(names)
         title = f"{user.mention} ({name_string})" if user else name_string
 
-        overall = await player.winrate_in()
+        overall = await self.winrate_in(player)
         game_count = f"{overall.n:,} games" if overall.n != 1 else "1 game"
         embed.set_footer(text=f"Seen in {game_count}")
 
@@ -555,14 +507,14 @@ class Stats(commands.Cog):
             embed.description = f"### {title}\n{rated}"
             embed.add_field(name="Winrates", value=textwrap.dedent(f"""
                 - Overall {overall}
-                - Town {await player.winrate_in(IdentitySpecifier().with_faction(gamelogs.town))}
-                - Purple {await player.winrate_in(IdentitySpecifier().with_faction(gamelogs.coven))}
-                  - Coven {await player.winrate_in(IdentitySpecifier().where(lambda role: role.default_faction == gamelogs.coven))}
-                  - TT {await player.winrate_in(IdentitySpecifier().where(lambda role: role.default_faction == gamelogs.town).with_faction(gamelogs.coven))}
+                - Town {await self.winrate_in(player, IdentitySpecifier().with_faction(gamelogs.town))}
+                - Purple {await self.winrate_in(player, IdentitySpecifier().with_faction(gamelogs.coven))}
+                  - Coven {await self.winrate_in(player, IdentitySpecifier().where(lambda role: role.default_faction == gamelogs.coven))}
+                  - TT {await self.winrate_in(player, IdentitySpecifier().where(lambda role: role.default_faction == gamelogs.town).with_faction(gamelogs.coven))}
             """))
             embed.add_field(name="Winrates in hunt", value=textwrap.dedent(f"""
-                - Town {await player.winrate_in(IdentitySpecifier(hunt=True).with_faction(gamelogs.town))}
-                - TT {await player.winrate_in(IdentitySpecifier(hunt=True).with_faction(gamelogs.coven))}
+                - Town {await self.winrate_in(player, IdentitySpecifier(hunt=True).with_faction(gamelogs.town))}
+                - TT {await self.winrate_in(player, IdentitySpecifier(hunt=True).with_faction(gamelogs.coven))}
             """))
 
         if r:

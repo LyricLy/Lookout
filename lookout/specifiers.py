@@ -5,8 +5,7 @@ from typing import Self, Callable, TYPE_CHECKING
 import gamelogs
 from discord.ext import commands
 
-if TYPE_CHECKING:
-    from .stats import PlayerInfo
+from .player_info import PlayerInfo
 
 
 ROLES = [r for r in gamelogs.by_name.values() if r.default_faction in (gamelogs.town, gamelogs.coven)]
@@ -234,8 +233,6 @@ class PlayerSpecifier(IdentitySpecifier):
         return f"({' AND '.join(clauses)})", p
 
     async def finish_parsing(self, ctx: commands.Context, words: list[str]) -> None:
-        from .stats import PlayerInfo
-
         for i, word in reversed(list(enumerate(words))):
             if word.startswith("ign:"):
                 self.ign = " ".join([word.removeprefix("ign:"), *words[i+1:]]).strip().replace("\u200b", "")
