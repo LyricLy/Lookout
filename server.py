@@ -32,8 +32,7 @@ def show_reason(r: aiosqlite.Row) -> str:
 @app.route("/")
 async def root():
     db = await get_db()
-    async with db.execute("SELECT * FROM Blacklists") as cur:
-        dump = ckdl.Document([ckdl.Node(None, "-", r["account_name"], reason=show_reason(r)) async for r in cur]).dump(ckdl.EmitterOptions(version=1))  # type: ignore
+    dump = ckdl.Document([ckdl.Node(None, "-", r["account_name"], reason=show_reason(r)) async for r in await db.execute("SELECT * FROM Blacklists")]).dump(ckdl.EmitterOptions(version=1))  # type: ignore
     return quart.Response(dump, mimetype="application/vnd.kdl")
 
 if __name__ == "__main__":

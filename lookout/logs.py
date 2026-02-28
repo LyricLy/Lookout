@@ -103,7 +103,7 @@ class Gamelogs(commands.Cog):
         return True
 
     async def fetch_log(self, game: gamelogs.GameResult) -> Gamelog:
-        async with self.bot.db.execute("""
+        r = await (await self.bot.db.execute("""
             SELECT
                 Best.channel_id, Best.message_id, Best.attachment_id, Best.filename, Best.clean_content,
                 First.message_id, First.filename_time
@@ -111,8 +111,7 @@ class Gamelogs(commands.Cog):
             INNER JOIN Gamelogs AS Best ON Best.hash = from_log
             INNER JOIN Gamelogs AS First ON First.hash = first_log
             WHERE gist = ?
-        """, (gist_of(game),)) as cur:
-            r = await cur.fetchone()
+        """, (gist_of(game),))).fetchone()
         if r is None:
             raise ValueError("game not found")
 
@@ -177,8 +176,7 @@ class Gamelogs(commands.Cog):
             try:
                 await self.bot.db.execute("INSERT INTO Games (gist, from_log, first_log, message_count, analysis, analysis_version, victor, hunt_reached) VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, ?7)", row)
             except aiosqlite.IntegrityError:
-                async with self.bot.db.execute("SELECT message_count FROM Games WHERE gist = ?", (gist,)) as cur:
-                    existing_count, = await cur.fetchone()  # type: ignore
+                existing_count, = await (await self.bot.db.execute("SELECT message_count FROM Games WHERE gist = ?", (gist,))).fetchone()  # type: ignore
                 if message_count >= existing_count:
                     await self.bot.db.execute("UPDATE Games SET from_log = ?2, message_count = ?3, analysis = ?4, analysis_version = ?5, victor = ?6, hunt_reached = ?7 WHERE gist = ?1", row)
             else:
@@ -193,8 +191,7 @@ class Gamelogs(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self) -> None:
-        async with self.bot.db.execute("SELECT COALESCE(MAX(message_id), 0) FROM Gamelogs") as cur:
-            start, = await cur.fetchone()  # type: ignore
+        start, = await (await self.bot.db.execute("SELECT COALESCE(MAX(message_id), 0) FROM Gamelogs")).fetchone()  # type: ignore
         channel = self.bot.get_partial_messageable(config.gamelog_channel_id)
         log.info("catching up")
         c = 0
@@ -217,15 +214,14 @@ class Gamelogs(commands.Cog):
     async def gamedump(self, ctx: commands.Context) -> None:
         """Dump logs from the database into a folder."""
         cache = {}
-        async with self.bot.db.execute("SELECT filename, clean_content, uploader FROM Gamelogs") as cur:
-            async for filename, content, uploader in cur:
-                if uploader in cache:
-                    name = cache[uploader]
-                else:
-                    name = (self.bot.get_user(uploader) or await self.bot.fetch_user(uploader)).name
-                    cache[uploader] = name
-                with open(f"log_area/{name}-{filename}", "w") as f:
-                    f.write(content)
+        async for filename, content, uploader in await self.bot.db.execute("SELECT filename, clean_content, uploader FROM Gamelogs"):
+            if uploader in cache:
+                name = cache[uploader]
+            else:
+                name = (self.bot.get_user(uploader) or await self.bot.fetch_user(uploader)).name
+                cache[uploader] = name
+            with open(f"log_area/{name}-{filename}", "w") as f:
+                f.write(content)
 
 
 async def setup(bot: Lookout):

@@ -163,19 +163,19 @@ class TopPaginator(ViewContainer):
             return [(player, player.ordinal()) for player in await self.stats.fetch_players(self.stats.now())]
 
         elif self.crit == "regle":
-            async with self.stats.bot.db.execute("SELECT player_id, COALESCE(SUM(guessed = correct), 0), COUNT(*) FROM RegleGames GROUP BY player_id") as cur:
-                return [(ReglePlayerInfo(player), n if self.played else Winrate(s, n)) async for player_id, s, n in cur if (player := self.stats.bot.get_user(player_id))]
+            cur = await self.stats.bot.db.execute("SELECT player_id, COALESCE(SUM(guessed = correct), 0), COUNT(*) FROM RegleGames GROUP BY player_id")
+            return [(ReglePlayerInfo(player), n if self.played else Winrate(s, n)) async for player_id, s, n in cur if (player := self.stats.bot.get_user(player_id))]
 
         c, p = self.crit.to_sql()
         hidden_clause = "NOT EXISTS(SELECT 1 FROM Hidden WHERE player = Appearances.player) AND "
         if self.played:
             if self.crit.won is None:
                 hidden_clause = ""
-            async with self.stats.bot.db.execute(f"SELECT player, COUNT(*) FROM Appearances WHERE {hidden_clause}{c} GROUP BY player", p) as cur:
-                return [(await self.stats.fetch_player(player, self.stats.now(), with_rank=False), c) async for player, c in cur]
+            cur = await self.stats.bot.db.execute(f"SELECT player, COUNT(*) FROM Appearances WHERE {hidden_clause}{c} GROUP BY player", p)
+            return [(await self.stats.fetch_player(player, self.stats.now(), with_rank=False), c) async for player, c in cur]
         else:
-            async with self.stats.bot.db.execute(f"SELECT player, COALESCE(SUM(won), 0), COUNT(*) FROM Appearances WHERE {hidden_clause}{c} GROUP BY player", p) as cur:
-                return [(await self.stats.fetch_player(player, self.stats.now(), with_rank=False), Winrate(s, n)) async for player, s, n in cur]
+            cur = await self.stats.bot.db.execute(f"SELECT player, COALESCE(SUM(won), 0), COUNT(*) FROM Appearances WHERE {hidden_clause}{c} GROUP BY player", p)
+            return [(await self.stats.fetch_player(player, self.stats.now(), with_rank=False), Winrate(s, n)) async for player, s, n in cur]
 
     def key_desc(self) -> str:
         if self.crit == "rating":
@@ -280,16 +280,13 @@ class Stats(commands.Cog):
         self.catchup = asyncio.Lock()
 
     async def cog_load(self) -> None:
-        #self.update_task = asyncio.create_task(self.update_loop())
         self.catchup_task = asyncio.create_task(self.run_games())
 
     async def cog_unload(self) -> None:
-        #self.update_task.cancel()
         self.catchup_task.cancel()
 
     async def update_game(self, gist: str, from_log: str) -> None:
-        async with self.bot.db.execute("SELECT clean_content FROM Gamelogs WHERE hash = ?", (from_log,)) as cur:
-            content, = await cur.fetchone()  # type: ignore
+        content, = await (await self.bot.db.execute("SELECT clean_content FROM Gamelogs WHERE hash = ?", (from_log,))).fetchone()  # type: ignore
         try:
             game, message_count = gamelogs.parse(content, gamelogs.ResultAnalyzer() & gamelogs.MessageCountAnalyzer(), clean_tags=False)
         except gamelogs.BadLogError:
@@ -301,11 +298,10 @@ class Stats(commands.Cog):
             log.info("updated game from log %s to version %d", from_log, gamelogs.version)
 
     async def games(self, injection: str = "", params: Sequence[object] | dict[str, Any] = ()) -> AsyncIterator[gamelogs.GameResult]:
-        async with self.bot.db.execute(f"SELECT gist, analysis, analysis_version, from_log FROM Games {injection}", params) as cur:
-            async for gist, game, version, from_log in cur:
-                if version < gamelogs.version:
-                    asyncio.create_task(self.update_game(gist, from_log))
-                yield game
+        async for gist, game, version, from_log in await self.bot.db.execute(f"SELECT gist, analysis, analysis_version, from_log FROM Games {injection}", params):
+            if version < gamelogs.version:
+                asyncio.create_task(self.update_game(gist, from_log))
+            yield game
 
     async def run_game(self, game: gamelogs.GameResult):
         logs: Gamelogs = self.bot.get_cog("Gamelogs")  # type: ignore
@@ -358,39 +354,6 @@ class Stats(commands.Cog):
     async def on_saw_games(self):
         await self.run_games()
 
-#     async def update_loop(self) -> None:
-#         while True:
-#             try:
-#                 async with self.bot.db.execute("SELECT last_update FROM Globals") as cur:
-#                     last_update, = await cur.fetchone()  # type: ignore
-#                 next_update = config.next_update(last_update)
-#                 await discord.utils.sleep_until(next_update - config.grace_period)
-# 
-#                 players = await self.run_games()
-#                 old = await self.fetch_discord_players()
-#                 await discord.utils.sleep_until(next_update)
-# 
-#                 await self.save_stats(players)
-#                 new = await self.fetch_discord_players()
-#                 changes = []
-#                 for old_you, new_you in zip(old, new):
-#                     if not new_you.user or old_you.winrates == new_you.winrates:
-#                         continue
-#                     recents = new_you.winrate_in(Part.ALL) - old_you.winrate_in(Part.ALL)
-#                     changes.append(f"{new_you.user.mention} {old_you.ordinal():.0f} -> {new_you.ordinal():.0f} (W-L {recents.s}-{recents.n-recents.s})")
-#                 embed = discord.Embed(
-#                     title=f"{last_update.strftime('%B %-d') if last_update.year == next_update.year else last_update.strftime('%B %-d %Y')} - {next_update.strftime('%B %-d %Y')}",
-#                     description="\n".join(changes),
-#                     colour=discord.Colour(0xd18411),
-#                 )
-#                 report_channel = self.bot.get_partial_messageable(config.report_channel_id)
-#                 await report_channel.send(embed=embed)
-# 
-#                 await self.bot.db.execute("UPDATE Globals SET last_update = ?", (datetime.datetime.now(datetime.timezone.utc),))
-#             except Exception:
-#                 log.exception("error in update loop")
-#                 await asyncio.sleep(10)
-
     def prev_update(self) -> datetime.datetime:
         return config.prev_update(datetime.datetime.now(datetime.timezone.utc))
 
@@ -421,13 +384,11 @@ class Stats(commands.Cog):
     RATINGS_WO_RANK = _RATINGS.format("(SELECT NULL as rank)")
 
     async def fetch_player(self, player: int, at: Timecode, *, with_rank: bool = True) -> PlayerInfo:
-        async with self.bot.db.execute(f"SELECT * FROM {Stats.RATINGS if with_rank else Stats.RATINGS_WO_RANK} WHERE player = ?", (*at, player,)) as cur:
-            r = await cur.fetchone()
+        r = await (await self.bot.db.execute(f"SELECT * FROM {Stats.RATINGS if with_rank else Stats.RATINGS_WO_RANK} WHERE player = ?", (*at, player,))).fetchone()
         return await self._row_to_player_info(player, r)
 
     async def resolve_player_name(self, name: str) -> int | None:
-        async with self.bot.db.execute("SELECT player FROM Names WHERE name = ?", (name,)) as cur:
-            r = await cur.fetchone()
+        r = await (await self.bot.db.execute("SELECT player FROM Names WHERE name = ?", (name,))).fetchone()
         return r[0] if r else None
 
     async def fetch_player_by_name(self, name: str, at: Timecode, *, with_rank: bool = True) -> PlayerInfo | None:
@@ -435,21 +396,20 @@ class Stats(commands.Cog):
         return await self.fetch_player(player, at, with_rank=with_rank) if player else None
 
     async def fetch_players(self, at: Timecode) -> list[PlayerInfo]:
-        async with self.bot.db.execute(f"SELECT * FROM {Stats.RATINGS}", (*at,)) as cur:
-            return [await self._row_to_player_info(r["player"], r) async for r in cur]
+        cur = await self.bot.db.execute(f"SELECT * FROM {Stats.RATINGS}", (*at,))
+        return [await self._row_to_player_info(r["player"], r) async for r in cur]
 
     async def fetch_discord_players(self, at: Timecode) -> list[PlayerInfo]:
-        async with self.bot.db.execute(f"SELECT * FROM {Stats.RATINGS} WHERE EXISTS(SELECT 1 FROM DiscordConnections WHERE player = Ratings.player) ORDER BY player", (*at,)) as cur:
-            return [await self._row_to_player_info(r["player"], r) async for r in cur]
+        cur = await self.bot.db.execute(f"SELECT * FROM {Stats.RATINGS} WHERE EXISTS(SELECT 1 FROM DiscordConnections WHERE player = Ratings.player) ORDER BY player", (*at,))
+        return [await self._row_to_player_info(r["player"], r) async for r in cur]
 
     @commands.command()
     async def info(self, ctx: commands.Context) -> None:
         """General information and statistics on stored games."""
-        async with self.bot.db.execute("""SELECT
+        town_maj, coven_maj, town_hunt, coven_hunt = await (await self.bot.db.execute("""SELECT
             SUM(victor = 'town' AND NOT hunt_reached), SUM(victor = 'coven' AND NOT hunt_reached),
             SUM(victor = 'town' AND hunt_reached), SUM(victor = 'coven' AND hunt_reached)
-        FROM Games""") as cur:
-            town_maj, coven_maj, town_hunt, coven_hunt = await cur.fetchone()  # type: ignore
+        FROM Games""")).fetchone()  # type: ignore
         total = town_maj + town_hunt + coven_maj + coven_hunt
 
         next_on = f", next on {discord.utils.format_dt(d)}" if (d := self.next_update()) else ""
@@ -472,8 +432,10 @@ class Stats(commands.Cog):
 
     async def winrate_in(self, player: PlayerInfo, spec: IdentitySpecifier = IdentitySpecifier()) -> Winrate:
         c, p = spec.to_sql()
-        async with self.bot.db.execute(f"SELECT COALESCE(SUM(won), 0), COUNT(*) FROM Appearances WHERE player = :player AND {c}", {"player": player.id, **p}) as cur:
-            s, n = await cur.fetchone()  # type: ignore
+        s, n = await (await self.bot.db.execute(  # type: ignore
+            f"SELECT COALESCE(SUM(won), 0), COUNT(*) FROM Appearances WHERE player = :player AND {c}",
+            {"player": player.id, **p},
+        )).fetchone()
         return Winrate(s, n)
 
     @commands.command()
@@ -485,8 +447,7 @@ class Stats(commands.Cog):
 
         r = None
         for name in names:
-            async with self.bot.db.execute("SELECT thread_id FROM Blacklists WHERE account_name = ?", (name,)) as cur:
-                r = await cur.fetchone()
+            r = await (await self.bot.db.execute("SELECT thread_id FROM Blacklists WHERE account_name = ?", (name,))).fetchone()
             if r:
                 break
 
@@ -543,8 +504,7 @@ class Stats(commands.Cog):
             return
 
         # rerun the period we're about to clobber
-        async with self.bot.db.execute("SELECT MIN(timecode) FROM Appearances WHERE player = ?", (b.id,)) as cur:
-            tc, = await cur.fetchone()  # type: ignore
+        tc, = await (await self.bot.db.execute("SELECT MIN(timecode) FROM Appearances WHERE player = ?", (b.id,))).fetchone()  # type: ignore
         timecode = Timecode.from_str(tc)
         await self.bot.db.execute(
             "UPDATE Globals SET (last_update_message_id, last_update_filename_time) = (?, ?)",
@@ -562,8 +522,10 @@ class Stats(commands.Cog):
     @commands.command()
     async def hide(self, ctx: commands.Context) -> None:
         """Hide the information the bot tracks about your gameplay."""
-        async with self.bot.db.execute("INSERT OR REPLACE INTO Hidden (player) SELECT player FROM DiscordConnections WHERE discord_id = ? RETURNING player", (ctx.author.id,)) as cur:
-            r = await cur.fetchone()
+        r = await (await self.bot.db.execute(
+            "INSERT OR REPLACE INTO Hidden (player) SELECT player FROM DiscordConnections WHERE discord_id = ? RETURNING player",
+            (ctx.author.id,),
+        )).fetchone()
         if not r:
             await ctx.send("Sorry, I don't know who you are.")
             return
@@ -573,8 +535,7 @@ class Stats(commands.Cog):
     @commands.command(aliases=["unhide"])
     async def show(self, ctx: commands.Context) -> None:
         """Revert the effect of `hide`."""
-        async with self.bot.db.execute("SELECT player FROM DiscordConnections WHERE discord_id = ?", (ctx.author.id,)) as cur:
-            r = await cur.fetchone()
+        r = await (await self.bot.db.execute("SELECT player FROM DiscordConnections WHERE discord_id = ?", (ctx.author.id,))).fetchone()
         if not r:
             await ctx.send("Sorry, I don't know who you are.")
             return
@@ -614,8 +575,7 @@ class Stats(commands.Cog):
         for member in guild.members:
             if member.bot:
                 continue
-            async with self.bot.db.execute("SELECT 1 FROM DiscordConnections WHERE discord_id = ?", (member.id,)) as cur:
-                exists = await cur.fetchone()
+            exists = await (await self.bot.db.execute("SELECT 1 FROM DiscordConnections WHERE discord_id = ?", (member.id,))).fetchone()
             if not exists:
                 members.append(member)
         await ctx.send("\n".join(f"- {member.mention}" for member in members))

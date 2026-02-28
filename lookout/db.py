@@ -161,9 +161,7 @@ async def connect(path: str) -> aiosqlite.Connection:
         except aiosqlite.Error as e:
             raise RuntimeError(f"failed to migrate database from version {n} to {n+1}") from e
 
-        async with db.execute("PRAGMA foreign_key_check") as cur:
-            r = await cur.fetchone()
-        if r:
+        if await (await db.execute("PRAGMA foreign_key_check")).fetchone():
             raise RuntimeError(f"foreign key violation when migrating database from version {n} to {n+1}: {r[0]} has a dangling reference to {r[2]} (rowid {r[1]}, constraint {r[3]})")
 
         await db.execute(f"PRAGMA user_version = {n + 1}")

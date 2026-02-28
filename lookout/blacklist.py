@@ -62,9 +62,7 @@ class Blacklist(commands.Cog):
         await asyncio.sleep(1)
         await self.check_thread(thread)
 
-        async with self.bot.db.execute("SELECT 1 FROM BlacklistGames WHERE thread_id = ?", (thread.id,)) as cur:
-            exists = await cur.fetchone()
-        if not exists:
+        if not await (await self.bot.db.execute("SELECT 1 FROM BlacklistGames WHERE thread_id = ?", (thread.id,))).fetchone():
             await thread.add_tags(discord.Object(id=config.no_logs_tag))
 
     @commands.Cog.listener()
@@ -116,13 +114,14 @@ class Blacklist(commands.Cog):
         if target.id == config.channel_id:
             await ctx.send("It's not a good idea to dump into the current blacklist channel.")
             return
-        async with self.bot.db.execute("SELECT DISTINCT thread_id, reason FROM Blacklists") as cur:
-            async for thread, reason in cur:
-                async with self.bot.db.execute("SELECT account_name FROM Blacklists WHERE thread_id = ?", (thread,)) as cur:
-                    names = [x for x, in await cur.fetchall()]
-                async with self.bot.db.execute("SELECT filename, clean_content FROM BlacklistGames INNER JOIN Gamelogs ON hash = from_log INNER JOIN Games ON BlacklistGames.gist = Games.gist WHERE thread_id = ?", (thread,)) as cur:
-                    files = await cur.fetchall()
-                await target.create_thread(name=", ".join(names), content=reason, files=[discord.File(io.BytesIO(content.encode()), filename=filename) for filename, content in files])
+
+        async for thread, reason in await self.bot.db.execute("SELECT DISTINCT thread_id, reason FROM Blacklists"):
+            names = [x async for x, in await self.bot.db.execute("SELECT account_name FROM Blacklists WHERE thread_id = ?", (thread,))]
+            files = await self.bot.db.execute(
+                "SELECT filename, clean_content FROM BlacklistGames INNER JOIN Gamelogs ON hash = from_log INNER JOIN Games ON BlacklistGames.gist = Games.gist WHERE thread_id = ?",
+                (thread,),
+            )
+            await target.create_thread(name=", ".join(names), content=reason, files=[discord.File(io.BytesIO(content.encode()), filename=filename) async for filename, content in files])
 
 
 async def setup(bot: Lookout):

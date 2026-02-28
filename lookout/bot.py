@@ -21,17 +21,14 @@ class AiosqliteConnectionAdapter(sql.Adapter[aiosqlite.Connection]):
         return f"aiosqlite {aiosqlite.__version__} Connection"
 
     async def fetchrow(self, query: str) -> dict[str, Any]:
-        async with self.connector.execute(query) as cur:
-            row = await cur.fetchone()
+        row = await (await self.connector.execute(query)).fetchone()
         return dict(row) if row else None  # type: ignore
 
     async def fetch(self, query: str) -> list[dict[str, Any]]:
-        async with self.connector.execute(query) as cur:
-            return [dict(row) async for row in cur]
+        return [dict(row) async for row in await self.connector.execute(query)]
 
     async def execute(self, query: str) -> str:
-        async with self.connector.execute(query) as cur:
-            return str(cur.rowcount)
+        return str((await self.connector.execute(query)).rowcount)
 
     async def table_summary(self, table_query: str | None) -> dict[str, dict[str, str]]:
         tables = defaultdict(dict)
@@ -39,13 +36,11 @@ class AiosqliteConnectionAdapter(sql.Adapter[aiosqlite.Connection]):
         if table_query:
             names = [table_query]
         else:
-            async with self.connector.execute("SELECT name FROM sqlite_master WHERE type = 'table'") as cur:
-                names = [name async for name, in cur]
+            names = [name async for name, in await self.connector.execute("SELECT name FROM sqlite_master WHERE type = 'table'")]
 
         for name in names:
-            async with self.connector.execute("SELECT name, type, `notnull`, dflt_value, pk FROM pragma_table_info(?)", (name,)) as cur:
-                async for row in cur:
-                    tables[name][row["name"]] = self.format_column_row(row)
+            async for row in await self.connector.execute("SELECT name, type, `notnull`, dflt_value, pk FROM pragma_table_info(?)", (name,)):
+                tables[name][row["name"]] = self.format_column_row(row)
 
         return tables
 

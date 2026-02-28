@@ -289,12 +289,16 @@ class Search(commands.Cog):
             patterns = []
             for text in query.chat:
                 pattern = text[1:-1] if len(text) >= 2 and text[0] == text[-1] == "/" else fr"\b{re2.escape(text)}\b"
-                patterns.append(fr'<span class=".*">(?<author>.*)</span>\n<span>: .*{pattern}.*</span>|<span style=".*">(?<author_dead>.*)</span>\n<span style=".*">: .*{pattern}.*</i></span>')
+                patterns.append(
+                    fr'<span class=".*">(?<author>.*)</span>\n<span>: .*{pattern}.*</span>|<span style=".*">(?<author_dead>.*)</span>\n<span style=".*">: .*{pattern}.*</i></span>'
+                )
 
             results = []
             async for game in cur:
-                async with self.bot.db.execute("SELECT clean_content FROM Gamelogs INNER JOIN Games ON hash = from_log WHERE gist = ?", (gist_of(game),)) as cur:
-                    content, = await cur.fetchone()  # type: ignore
+                content, = await (await self.bot.db.execute(  # type: ignore
+                    "SELECT clean_content FROM Gamelogs INNER JOIN Games ON hash = from_log WHERE gist = ?",
+                    (gist_of(game),),
+                )).fetchone()
 
                 for pattern in patterns:
                     for m in re2.finditer(pattern, content, RE_OPTIONS):
