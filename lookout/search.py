@@ -31,6 +31,14 @@ class DateRange:
     start: datetime.date
     stop: datetime.date
 
+    @property
+    def start_id(self) -> int:
+        return discord.utils.time_snowflake(datetime.datetime.combine(self.start, datetime.time.min, tzinfo=datetime.timezone.utc))
+
+    @property
+    def stop_id(self) -> int:
+        return discord.utils.time_snowflake(datetime.datetime.combine(self.stop, datetime.time.max, tzinfo=datetime.timezone.utc))
+
     @classmethod
     async def convert(cls, ctx: commands.Context, argument: str) -> DateRange:
         if season := SEASONS.get(argument.lower()):
@@ -189,6 +197,105 @@ class SearchQuery(commands.FlagConverter):
     team: tuple[PlayerInfo, ...] = ()
     count: list[tuple[int, str]] = []
 
+    async def search(self, bot: Lookout) -> list[gamelogs.GameResult]:
+        joins = []
+        where = []
+        p = {}
+
+        approx_date = "(SELECT message_id FROM Gamelogs WHERE hash = first_log)"
+        if self.before:
+            where.append(f"{approx_date} < :before")
+            p["before"] = self.before.start_id
+        if self.during:
+            where.append(f"{approx_date} >= :start AND {approx_date} <= :stop")
+            p["start"] = self.during.start_id
+            p["stop"] = self.during.stop_id
+        if self.after:
+            where.append(f"{approx_date} > :after")
+            p["after"] = self.after.stop_id
+
+        if self.victor:
+            where.append(f"victor = :victor")
+            p["victor"] = self.victor
+
+        if self.hunt is not None:
+            where.append(f"hunt_reached = :hunt")
+            p["hunt"] = self.hunt
+
+        for spec in self.has:
+            c, p2 = spec.to_sql()
+            joins.append(f"INNER JOIN (SELECT DISTINCT game AS gist FROM Appearances WHERE {c}) USING (gist)")
+            p.update(p2)
+
+        if self.author:
+            arms = []
+            for spec in self.author:
+                c, p2 = spec.to_sql()
+                arms.append(f"EXISTS(SELECT 1 FROM Appearances WHERE game = gist AND {c})")
+                p.update(p2)
+            where.append(" OR ".join(arms))
+
+        if self.team:
+            for i, player in enumerate(self.team):
+                joins.append(f"INNER JOIN (SELECT game AS gist, faction FROM Appearances WHERE player = :team_{i}) AS Team{i} USING (gist)")
+                p[f"team_{i}"] = player.id
+                if i:
+                    where.append(f"Team{i}.faction = Team0.faction")
+
+        for i, (count, bucket_name) in enumerate(self.count):
+            if count < 0:
+                raise commands.BadArgument("Count cannot be negative.")
+            bucket = BUCKETS.get(bucket_name.lower())
+            if not bucket:
+                raise commands.BadArgument(f"Unknown bucket name '{bucket_name}'.")
+
+            c, p2 = IdentitySpecifier(roles=list(bucket), only_starting=True).to_sql()
+            where.append(f"(SELECT COUNT(*) >= :count_{i} FROM Appearances WHERE game = gist AND {c})")
+            p[f"count_{i}"] = count
+            p.update(p2)
+
+        stats: Stats = bot.get_cog("Stats")  # type: ignore
+        cur = stats.games(f"{' '.join(joins)} WHERE ({' AND '.join(where) if where else '1'})", p)
+
+        if self.chat:
+            patterns = []
+            for text in self.chat:
+                pattern = text[1:-1] if len(text) >= 2 and text[0] == text[-1] == "/" else fr"\b{re2.escape(text)}\b"
+                patterns.append(
+                    fr'<span class=".*">(?<author>.*)</span>\n<span>: .*{pattern}.*</span>|<span style=".*">(?<author_dead>.*)</span>\n<span style=".*">: .*{pattern}.*</i></span>'
+                )
+
+            results = []
+            async for game in cur:
+                content, = await (await bot.db.execute(  # type: ignore
+                    "SELECT clean_content FROM Gamelogs INNER JOIN Games ON hash = from_log WHERE gist = ?",
+                    (gist_of(game),),
+                )).fetchone()
+
+                for pattern in patterns:
+                    for m in re2.finditer(pattern, content, RE_OPTIONS):
+                        if not self.author:
+                            break
+
+                        try:
+                            if m["author"]:
+                                author = next(player for player in game.players if player.game_name == m["author"])
+                            else:
+                                author = next(player for player in game.players if player.game_name.replace(" ", "-") == m["author_dead"])
+                        except StopIteration:
+                            continue
+
+                        if any([await spec.matches(game, author) for spec in self.author]):
+                            break
+                    else:
+                        break
+                else:
+                    results.append(game)
+        else:
+            results = [game async for game in cur]
+
+        return results
+
 SearchQuery.__commands_flag_regex__ = re.compile(r"\b" + SearchQuery.__commands_flag_regex__.pattern, SearchQuery.__commands_flag_regex__.flags)
 
 
@@ -235,102 +342,7 @@ class Search(commands.Cog):
         count:
         Look for games with a minimum number of a given role or alignment.
         """
-        joins = []
-        where = []
-        p = {}
-
-        approx_date = "(SELECT approx_date FROM Gamelogs WHERE hash = first_log)"
-        if query.before:
-            where.append(f"{approx_date} < :before")
-            p["before"] = query.before.start
-        if query.during:
-            where.append(f"{approx_date} >= :start AND {approx_date} <= :stop")
-            p["start"] = query.during.start
-            p["stop"] = query.during.stop
-        if query.after:
-            where.append(f"{approx_date} > :after")
-            p["after"] = query.after.stop
-
-        if query.victor:
-            where.append(f"victor = :victor")
-            p["victor"] = query.victor
-
-        if query.hunt is not None:
-            where.append(f"hunt_reached = :hunt")
-            p["hunt"] = query.hunt
-
-        for spec in query.has:
-            c, p2 = spec.to_sql()
-            joins.append(f"INNER JOIN (SELECT DISTINCT game AS gist FROM Appearances WHERE {c}) USING (gist)")
-            p.update(p2)
-
-        if query.author:
-            arms = []
-            for spec in query.author:
-                c, p2 = spec.to_sql()
-                arms.append(f"EXISTS(SELECT 1 FROM Appearances WHERE game = gist AND {c})")
-                p.update(p2)
-            where.append(" OR ".join(arms))
-
-        if query.team:
-            for i, player in enumerate(query.team):
-                joins.append(f"INNER JOIN (SELECT game AS gist, faction FROM Appearances WHERE player = :team_{i}) AS Team{i} USING (gist)")
-                p[f"team_{i}"] = player.id
-                if i:
-                    where.append(f"Team{i}.faction = Team0.faction")
-
-        for i, (count, bucket_name) in enumerate(query.count):
-            if count < 0:
-                raise commands.BadArgument("Count cannot be negative.")
-            bucket = BUCKETS.get(bucket_name.lower())
-            if not bucket:
-                raise commands.BadArgument(f"Unknown bucket name '{bucket_name}'.")
-
-            c, p2 = IdentitySpecifier(roles=list(bucket), only_starting=True).to_sql()
-            where.append(f"(SELECT COUNT(*) >= :count_{i} FROM Appearances WHERE game = gist AND {c})")
-            p[f"count_{i}"] = count
-            p.update(p2)
-
-        stats: Stats = self.bot.get_cog("Stats")  # type: ignore
-        cur = stats.games(f"{' '.join(joins)} WHERE {' AND '.join(where) if where else '1'}", p)
-
-        if query.chat:
-            patterns = []
-            for text in query.chat:
-                pattern = text[1:-1] if len(text) >= 2 and text[0] == text[-1] == "/" else fr"\b{re2.escape(text)}\b"
-                patterns.append(
-                    fr'<span class=".*">(?<author>.*)</span>\n<span>: .*{pattern}.*</span>|<span style=".*">(?<author_dead>.*)</span>\n<span style=".*">: .*{pattern}.*</i></span>'
-                )
-
-            results = []
-            async for game in cur:
-                content, = await (await self.bot.db.execute(  # type: ignore
-                    "SELECT clean_content FROM Gamelogs INNER JOIN Games ON hash = from_log WHERE gist = ?",
-                    (gist_of(game),),
-                )).fetchone()
-
-                for pattern in patterns:
-                    for m in re2.finditer(pattern, content, RE_OPTIONS):
-                        if not query.author:
-                            break
-
-                        try:
-                            if m["author"]:
-                                author = next(player for player in game.players if player.game_name == m["author"])
-                            else:
-                                author = next(player for player in game.players if player.game_name.replace(" ", "-") == m["author_dead"])
-                        except StopIteration:
-                            continue
-
-                        if any([await spec.matches(game, author) for spec in query.author]):
-                            break
-                    else:
-                        break
-                else:
-                    results.append(game)
-        else:
-            results = [game async for game in cur]
-
+        results = await query.search(self.bot)
         if not results:
             await ctx.send("No results.")
             return
