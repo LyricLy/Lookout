@@ -141,6 +141,10 @@ class SearchResults(ViewContainer):
                 outcome = "Town eliminated • Coven wins"
                 thumbnail = "coven_wins.png"
 
+            case _, _, _:
+                outcome = "Unsure what happened • Dunno who won"
+                thumbnail = "who_wins.png"
+
         bl_threads = []
         async for thread_id, in await self.bot.db.execute("SELECT thread_id FROM BlacklistGames WHERE gist = ?", (gist_of(game),)):
             players = [name async for name, in await self.bot.db.execute("SELECT account_name FROM Blacklists WHERE thread_id = ?", (thread_id,))]
