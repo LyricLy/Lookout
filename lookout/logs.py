@@ -177,7 +177,7 @@ class Gamelogs(commands.Cog):
                 await self.bot.db.execute("INSERT INTO Games (gist, from_log, first_log, message_count, analysis, analysis_version, victor, hunt_reached) VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, ?7)", row)
             except aiosqlite.IntegrityError:
                 existing_count, = await (await self.bot.db.execute("SELECT message_count FROM Games WHERE gist = ?", (gist,))).fetchone()  # type: ignore
-                if message_count >= existing_count:
+                if "!force" in message.content or message_count >= existing_count:
                     await self.bot.db.execute("UPDATE Games SET from_log = ?2, message_count = ?3, analysis = ?4, analysis_version = ?5, victor = ?6, hunt_reached = ?7 WHERE gist = ?1", row)
             else:
                 c += 1
