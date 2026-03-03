@@ -109,7 +109,8 @@ class SearchResults(ViewContainer):
         logs: Gamelogs = self.bot.get_cog("Gamelogs")  # type: ignore
         log = await logs.fetch_log(game)
 
-        self.accent_colour = discord.Colour(0x06e00c if game.victor == gamelogs.town else 0xb545ff)
+        self.accent_colour = discord.Colour(0x06e00c if game.victor == gamelogs.town else 0xb545ff if game.victor == gamelogs.coven else 0x06cae0)
+
         match game.victor, bool(game.hunt_reached), game.outcome:
             case None, _, gamelogs.Outcome.NO_DEATHS:
                 outcome = "Stalled out • Match draw"
