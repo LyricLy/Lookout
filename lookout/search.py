@@ -110,23 +110,34 @@ class SearchResults(ViewContainer):
         log = await logs.fetch_log(game)
 
         self.accent_colour = discord.Colour(0x06e00c if game.victor == gamelogs.town else 0xb545ff)
-        match game.victor == gamelogs.town, bool(game.hunt_reached), game.outcome == gamelogs.Outcome.HEX_BOMB:
-            case _, False, True:
+        match game.victor, bool(game.hunt_reached), game.outcome:
+            case None, _, gamelogs.Outcome.NO_DEATHS:
+                outcome = "Stalled out • Match draw"
+                thumbnail = "draw.png"
+            case None, False, _:
+                outcome = "Mutual destruction • Match draw"
+                thumbnail = "draw.png"
+            case None, True, _:
+                outcome = "Mutual destruction in hunt • Match draw"
+                thumbnail = "draw_hunt.png"
+
+            case _, False, gamelogs.Outcome.HEX_BOMB:
                 outcome = "Hex bomb • Coven wins"
                 thumbnail = "hex_bomb.png"
-            case _, True, True:
+            case _, True, gamelogs.Outcome.HEX_BOMB:
                 outcome = "Hex bomb in hunt • Coven wins"
                 thumbnail = "hex_bomb_hunt.png"
-            case True, True, _:
+
+            case gamelogs.town, True, _:
                 outcome = "TT died in hunt • Town wins"
                 thumbnail = "town_wins_hunt.png"
-            case True, False, _:
+            case gamelogs.town, False, _:
                 outcome = "Coven obliterated • Town wins"
                 thumbnail = "town_wins.png"
-            case False, True, _:
+            case gamelogs.coven, True, _:
                 outcome = "TT survived hunt • Coven wins"
                 thumbnail = "coven_wins_hunt.png"
-            case False, False, _:
+            case gamelogs.coven, False, _:
                 outcome = "Town eliminated • Coven wins"
                 thumbnail = "coven_wins.png"
 
@@ -255,7 +266,7 @@ class SearchQuery(commands.FlagConverter):
             p.update(p2)
 
         stats: Stats = bot.get_cog("Stats")  # type: ignore
-        cur = stats.games(f"{' '.join(joins)} WHERE ({' AND '.join(where) if where else '1'})", p)
+        cur = stats.games(f"{' '.join(joins)} WHERE ({' AND '.join(where) if where else '1'}) ORDER BY rowid DESC", p)
 
         if self.chat:
             patterns = []
@@ -346,7 +357,6 @@ class Search(commands.Cog):
         if not results:
             await ctx.send("No results.")
             return
-        results.reverse()
         view = ContainerView(ctx.author, SearchResults(self.bot, results))
         await view.container.draw()
         view.message = await ctx.send(**view.send_args())
