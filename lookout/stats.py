@@ -160,7 +160,7 @@ class TopPaginator(ViewContainer):
 
     async def decorate_players(self) -> list[tuple[DisplayablePlayer, Key]]:
         if self.crit == "rating":
-            return [(player, player.ordinal()) for player in await self.stats.fetch_players(self.stats.now())]
+            return [(player, player.ordinal()) for player in await self.stats.fetch_players(self.stats.now()) if player.rank is not None]
 
         elif self.crit == "regle":
             cur = await self.stats.bot.db.execute("SELECT player_id, COALESCE(SUM(guessed = correct), 0), COUNT(*) FROM RegleGames GROUP BY player_id")
