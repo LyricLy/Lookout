@@ -64,12 +64,16 @@ class ResultAnalyzer(Analyzer[GameResult]):
                 player.ending_ident.faction = coven
                 self.modifiers.append("Town Traitor")
 
-    def kill(self, who: str, *, hanged: bool = False, last_night: bool = False) -> None:
+    def kill(self, who: str, *, last_night: bool = False, hanged: bool = False, dced: bool = False) -> None:
         player = self.players[who]
+
         if hanged:
             player.hanged = True
             if player.ending_ident.role.name == "Jester":
                 player.won = True
+        if dced:
+            player.dced = True
+
         if not player.died:
             self.draw_tomorrow = False
             player.died = DayTime(self.time.day-1, Time.NIGHT) if last_night else self.time
@@ -113,7 +117,7 @@ class ResultAnalyzer(Analyzer[GameResult]):
                 self.time = DayTime(n, Time.DAY)
                 self.trial_period = False
                 for dc in self.dced:
-                    self.kill(dc, last_night=True)
+                    self.kill(dc, last_night=True, dced=True)
                 self.dced.clear()
             case NightStart(n):
                 self.time = DayTime(n, Time.NIGHT)

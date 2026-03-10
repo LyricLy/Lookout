@@ -288,7 +288,7 @@ class Stats(commands.Cog):
     async def update_game(self, gist: str, from_log: str) -> None:
         content, = await (await self.bot.db.execute("SELECT clean_content FROM Gamelogs WHERE hash = ?", (from_log,))).fetchone()  # type: ignore
         try:
-            game, message_count = gamelogs.parse(content, gamelogs.ResultAnalyzer() & gamelogs.MessageCountAnalyzer(), clean_tags=False)
+            game, message_count = await asyncio.to_thread(gamelogs.parse, content, gamelogs.ResultAnalyzer() & gamelogs.MessageCountAnalyzer(), clean_tags=False)
         except gamelogs.BadLogError:
             log.exception("failed to update game from log %s", from_log)
         else:

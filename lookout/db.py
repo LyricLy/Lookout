@@ -30,6 +30,7 @@ class JPlayer(TypedDict):
     died: JDayTime | None
     won: bool 
     hanged: bool
+    dced: bool
 
 class JGameResult(TypedDict):
     players: list[JPlayer]
@@ -63,6 +64,7 @@ def ser_player(player: gamelogs.Player) -> JPlayer:
         "died": ser_day_time(player.died) if player.died else None,
         "won": player.won,
         "hanged": player.hanged,
+        "dced": player.dced,
     }
 
 def ser_game_result(game: gamelogs.GameResult) -> JGameResult:
@@ -99,6 +101,7 @@ def de_player(player: JPlayer) -> gamelogs.Player:
         de_day_time(player["died"]) if player["died"] else None,
         player["won"],
         player.get("hanged", False),
+        player.get("dced", False),
     )
 
 def de_game_result(game: JGameResult) -> gamelogs.GameResult:
