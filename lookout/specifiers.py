@@ -221,13 +221,13 @@ class PlayerSpecifier(IdentitySpecifier):
         clauses = [s]
 
         if self.player:
-            clauses.append(f"player == :{prefix}player")
+            clauses.append(f"player = :{prefix}player")
             p[f"{prefix}player"] = self.player.id
         if self.name:
-            clauses.append(f"account_name == :{prefix}name")
+            clauses.append(f"account_name = :{prefix}name")
             p[f"{prefix}name"] = self.name
         if self.ign:
-            clauses.append(f"game_name == :{prefix}ign")
+            clauses.append(f"game_name = :{prefix}ign")
             p[f"{prefix}ign"] = self.ign
 
         return f"({' AND '.join(clauses)})", p

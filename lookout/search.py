@@ -240,7 +240,7 @@ class SearchQuery(commands.FlagConverter):
 
         for spec in self.has:
             c, p2 = spec.to_sql()
-            joins.append(f"INNER JOIN (SELECT DISTINCT game AS gist FROM Appearances WHERE {c}) USING (gist)")
+            joins.append(f"INNER JOIN (SELECT game AS gist FROM Appearances WHERE {c}) USING (gist)")
             p.update(p2)
 
         if self.author:
@@ -271,7 +271,7 @@ class SearchQuery(commands.FlagConverter):
             p.update(p2)
 
         stats: Stats = bot.get_cog("Stats")  # type: ignore
-        cur = stats.games(f"{' '.join(joins)} WHERE ({' AND '.join(where) if where else '1'}) ORDER BY rowid DESC", p)
+        cur = stats.games(f"{' '.join(joins)} WHERE ({' AND '.join(where) if where else '1'}) GROUP BY gist ORDER BY rowid DESC", p)
 
         if self.chat:
             patterns = []
