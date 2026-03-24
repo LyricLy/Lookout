@@ -82,8 +82,8 @@ class ResultAnalyzer(Analyzer[GameResult]):
         match message:
             case PlayerInfo(number, game_name, account_name, role, prev_role, _, is_vip):
                 try:
-                    ending_ident = Identity(by_name[role[0]])
-                    starting_ident = Identity(by_name[prev_role[0]]) if prev_role else ending_ident
+                    ending_ident = Identity(by_name(role[0]))
+                    starting_ident = Identity(by_name(prev_role[0])) if prev_role else ending_ident
                 except KeyError as e:
                     raise UnsupportedRoleError(e.args[0])
                 faction_colour_shown = ending_ident.faction

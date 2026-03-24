@@ -26,116 +26,131 @@ vampire = Faction("Vampire")
 
 @_dataclass(eq=False)
 class Role:
-    name: str
+    names: list[str]
     default_faction: Faction | None
 
+    @property
+    def name(self) -> str:
+        return self.names[-1]
+
+    @property
+    def display(self) -> str:
+        return self.names[0]
+
     def __repr__(self) -> str:
-        return f"by_name[{self.name!r}]"
+        return f"by_name({self.name!r})"
 
     def __str__(self) -> str:
-        return self.name
+        return self.display
 
 by_bucket = {
     "Town Investigative": [
-        Role("Coroner", town),
-        Role("Investigator", town),
-        Role("Lookout", town),
-        Role("Psychic", town),
-        Role("Seer", town),
-        Role("Sheriff", town),
-        Role("Spy", town),
-        Role("Tracker", town),
+        Role(["Coroner"], town),
+        Role(["Investigator"], town),
+        Role(["Lookout"], town),
+        Role(["Psychic"], town),
+        Role(["Seer"], town),
+        Role(["Sheriff"], town),
+        Role(["Spy"], town),
+        Role(["Tracker"], town),
     ],
     "Town Protective": [
-        Role("Bodyguard", town),
-        Role("Cleric", town),
-        Role("Crusader", town),
-        Role("Oracle", town),
-        Role("Trapper", town),
+        Role(["Bodyguard"], town),
+        Role(["Cleric"], town),
+        Role(["Crusader"], town),
+        Role(["Oracle"], town),
+        Role(["Trapper"], town),
     ],
     "Town Killing": [
-        Role("Deputy", town),
-        Role("Trickster", town),
-        Role("Veteran", town),
-        Role("Vigilante", town),
+        Role(["Deputy"], town),
+        Role(["Trickster"], town),
+        Role(["Veteran"], town),
+        Role(["Vigilante"], town),
     ],
     "Town Support": [
-        Role("Admirer", town),
-        Role("Amnesiac", town),
-        Role("Retributionist", town),
-        Role("Socialite", town),
-        Role("Tavern Keeper", town),
+        Role(["Admirer"], town),
+        Role(["Amnesiac"], town),
+        Role(["Retributionist"], town),
+        Role(["Socialite"], town),
+        Role(["Tavern Keeper"], town),
     ],
     "Town Power": [
-        Role("Jailor", town),
-        Role("Marshal", town),
-        Role("Mayor", town),
-        Role("Monarch", town),
-        Role("Prosecutor", town),
+        Role(["Jailor"], town),
+        Role(["Marshal"], town),
+        Role(["Mayor"], town),
+        Role(["Monarch"], town),
+        Role(["Prosecutor"], town),
     ],
     "Town Outlier": [
-        Role("Catalyst", town),
-        Role("Pilgrim", town),
+        Role(["Catalyst"], town),
+        Role(["Pilgrim"], town),
     ],
 
     "Coven Power": [
-        Role("Coven Leader", coven),
-        Role("Hex Master", coven),
-        Role("Witch", coven),
+        Role(["Archmage", "Coven Leader"], coven),
+        Role(["Hex Master"], coven),
+        Role(["Witch"], coven),
     ],
     "Coven Killing": [
-        Role("Conjurer", coven),
-        Role("Jinx", coven),
-        Role("Ritualist", coven),
+        Role(["Conjurer"], coven),
+        Role(["Jinx"], coven),
+        Role(["Ritualist"], coven),
     ],
     "Coven Deception": [
-        Role("Dreamweaver", coven),
-        Role("Enchanter", coven),
-        Role("Illusionist", coven),
-        Role("Medusa", coven),
+        Role(["Dreamweaver"], coven),
+        Role(["Enchanter"], coven),
+        Role(["Illusionist"], coven),
+        Role(["Medusa"], coven),
     ],
     "Coven Utility": [
-        Role("Necromancer", coven),
-        Role("Poisoner", coven),
-        Role("Potion Master", coven),
-        Role("Voodoo Master", coven),
-        Role("Wildling", coven),
+        Role(["Necromancer"], coven),
+        Role(["Poisoner"], coven),
+        Role(["Potion Master"], coven),
+        Role(["Voodoo Master"], coven),
+        Role(["Wildling"], coven),
     ],
     "Coven Outlier": [
-        Role("Covenite", coven),
-        Role("Cultist", coven),
+        Role(["Covenite"], coven),
+        Role(["Cultist"], coven),
     ],
 
     "Neutral Evil": [
-        Role("Doomsayer", None),
-        Role("Executioner", None),
-        Role("Jester", None),
-        Role("Pirate", None),
+        Role(["Doomsayer"], None),
+        Role(["Executioner"], None),
+        Role(["Jester"], None),
+        Role(["Pirate"], None),
     ],
     "Neutral Killing": [
-        Role("Arsonist", arsonist),
-        Role("Serial Killer", serial_killer),
-        Role("Shroud", shroud),
-        Role("Werewolf", werewolf),
+        Role(["Arsonist"], arsonist),
+        Role(["Serial Killer"], serial_killer),
+        Role(["Shroud"], shroud),
+        Role(["Werewolf"], werewolf),
     ],
     "Neutral Apocalypse": [
-        Role("Baker", apocalypse),
-        Role("Berserker", apocalypse),
-        Role("Plaguebearer", apocalypse),
-        Role("Soul Collector", apocalypse),
-        Role("Famine", apocalypse),
-        Role("War", apocalypse),
-        Role("Pestilence", apocalypse),
-        Role("Death", apocalypse),
+        Role(["Baker"], apocalypse),
+        Role(["Berserker"], apocalypse),
+        Role(["Plaguebearer"], apocalypse),
+        Role(["Soul Collector"], apocalypse),
+        Role(["Famine"], apocalypse),
+        Role(["War"], apocalypse),
+        Role(["Pestilence"], apocalypse),
+        Role(["Death"], apocalypse),
     ],
     "Neutral Outlier": [
-        Role("Cursed Soul", None),
-        Role("Vampire", vampire),
+        Role(["Cursed Soul"], None),
+        Role(["Vampire"], vampire),
     ],
 }
 
-by_name = {r.name: r for b in by_bucket.values() for r in b}
-bucket_of = {r: n for n, b in by_bucket.items() for r in b}
+_bucket_of = {r: n for n, b in by_bucket.items() for r in b}
+_by_name = {n: r for b in by_bucket.values() for r in b for n in r.names}
+all_roles = list(_bucket_of)
+
+def bucket_of(r: Role) -> str:
+    return _bucket_of[r]
+
+def by_name(name: str) -> Role:
+    return _by_name[name]
 
 
 @_dataclass(unsafe_hash=True)

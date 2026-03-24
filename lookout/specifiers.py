@@ -8,7 +8,7 @@ from discord.ext import commands
 from .player_info import PlayerInfo
 
 
-ROLES = [r for r in gamelogs.by_name.values() if r.default_faction in (gamelogs.town, gamelogs.coven)]
+ROLES = [r for r in gamelogs.all_roles if r.default_faction in (gamelogs.town, gamelogs.coven)]
 
 BUCKET_ALIASES = {
     "ti": "town investigative",
@@ -73,7 +73,10 @@ BUCKET_ALIASES = {
     "conj": "conjurer",
     "rit": "ritualist",
 
-    "cl": "coven leader",
+    "coven leader": "archmage",
+    "cl": "archmage",
+    "arch": "archmage",
+    "am": "archmage",
     "hex": "hex master",
     "hm": "hex master",
 
@@ -89,14 +92,14 @@ BUCKET_ALIASES = {
 
 STRICT_BUCKETS = {
     **{b.casefold(): set(rs) for b, rs in gamelogs.by_bucket.items()},
-    "common town": {r for r in ROLES if r.default_faction == gamelogs.town and gamelogs.bucket_of[r] != "Town Power"},
+    "common town": {r for r in ROLES if r.default_faction == gamelogs.town and gamelogs.bucket_of(r) != "Town Power"},
     "random town": {r for r in ROLES if r.default_faction == gamelogs.town},
-    "common coven": {r for r in ROLES if r.default_faction == gamelogs.coven and gamelogs.bucket_of[r] not in ("Coven Killing", "Coven Power")},
+    "common coven": {r for r in ROLES if r.default_faction == gamelogs.coven and gamelogs.bucket_of(r) not in ("Coven Killing", "Coven Power")},
     "random coven": {r for r in ROLES if r.default_faction == gamelogs.coven},
 }
 
 PURE_BUCKETS = {
-    **{r.name.lower(): {r} for r in ROLES},
+    **{r.display.lower(): {r} for r in ROLES},
     **STRICT_BUCKETS,
 }
 

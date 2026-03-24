@@ -19,8 +19,12 @@ from .views import File
 log = logging.getLogger(__name__)
 
 
+class NotAGameError(Exception):
+    pass
+
+
 def gist_of(game: gamelogs.GameResult) -> str:
-    return ",".join(f"{player.game_name}/{player.account_name}/{player.ending_ident.role}" for player in game.players)
+    return ",".join(f"{player.game_name}/{player.account_name}/{player.ending_ident.role.name}" for player in game.players)
 
 def datetime_of_filename(filename: str) -> datetime.datetime | None:
     if m := re.fullmatch(r"(?:.*-)?(\d{4}-\d{2}-\d{2}-\d{2}-\d{2}).*\.html", filename):
@@ -28,17 +32,16 @@ def datetime_of_filename(filename: str) -> datetime.datetime | None:
 
 btos2_roles = {"Pacifist", "Banshee", "Warlock", "Inquisitor", "Auditor", "Judge", "Starspawn", "Jackal"}
 
-# close enough, welcome back Go errors
-def parse_game(text: str) -> tuple[tuple[gamelogs.GameResult, int] | None, str | None]:
+def parse_game(text: str) -> tuple[gamelogs.GameResult, int]:
     try:
-        return gamelogs.parse(text, gamelogs.ResultAnalyzer() & gamelogs.MessageCountAnalyzer(), clean_tags=False), None
+        return gamelogs.parse(text, gamelogs.ResultAnalyzer() & gamelogs.MessageCountAnalyzer(), clean_tags=False)
     except gamelogs.InvalidHTMLError:
-        return None, "File is not valid HTML"
+        raise NotAGameError("File is not valid HTML")
     except gamelogs.NotLogError:
-        return None, "Does not appear to be a gamelog"
+        raise NotAGameError("Does not appear to be a gamelog")
     except gamelogs.UnsupportedRoleError as e:
         name = e.args[0]
-        return None, f'Unknown role "{name}"{" (BToS2 is not supported)"*(name in btos2_roles)}'
+        raise NotAGameError(f'Unknown role "{name}"{" (BToS2 is not supported)"*(name in btos2_roles)}')
 
 
 @dataclass(order=True)
@@ -123,9 +126,36 @@ class Gamelogs(commands.Cog):
 
         return Gamelog(content, filename, url, Timecode(*timecode))
 
+    async def see_log(self, digest: str, clean_content: str, *, force: bool = False) -> bool:
+        game, message_count = parse_game(clean_content)
+
+        if game.modifiers != ["Town Traitor"]:
+            raise NotAGameError("Not a game of Town Traitor")
+        if any(gamelogs.bucket_of(player.ending_ident.role).startswith("Neutral") for player in game.players):
+            raise NotAGameError("Contains neutrals")
+
+        for player in game.players:
+            await self.bot.db.execute("INSERT OR IGNORE INTO Names VALUES (?, (SELECT COALESCE(MAX(player), 0) + 1 FROM Names))", (player.account_name,))
+
+        gist = gist_of(game)
+        row = (gist, digest, message_count, game, gamelogs.version, game.victor, bool(game.hunt_reached))
+
+        try:
+            await self.bot.db.execute("INSERT INTO Games (gist, from_log, first_log, message_count, analysis, analysis_version, victor, hunt_reached) VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, ?7)", row)
+        except aiosqlite.IntegrityError:
+            existing_count, = await (await self.bot.db.execute("SELECT message_count FROM Games WHERE gist = ?", (gist,))).fetchone()  # type: ignore
+            if force or message_count >= existing_count:
+                await self.bot.db.execute("UPDATE Games SET from_log = ?2, message_count = ?3, analysis = ?4, analysis_version = ?5, victor = ?6, hunt_reached = ?7 WHERE gist = ?1", row)
+            return False
+        else:
+            return True
+        finally:
+            await self.bot.db.execute("UPDATE Gamelogs SET game = ? WHERE hash = ?", (gist, digest))
+            await self.bot.db.commit()
+
     async def see_message(self, message: discord.Message, *, cry: bool = False) -> tuple[int, list[str]]:
-        tears = []
         c = 0
+        tears = []
 
         for attach in message.attachments:
             if not attach.filename.endswith(".html"):
@@ -152,41 +182,11 @@ class Gamelogs(commands.Cog):
                 tears.append((attach, "Filename does not contain date and time"))
                 continue
 
-            r, error = parse_game(clean_content)
-            if error:
-                tears.append((attach, error))
-            if not r:
-                continue
-
-            game, message_count = r
-
-            if game.modifiers != ["Town Traitor"]:
-                log.warn(f"non-TT game: {attach.filename}")
-                tears.append((attach, "Not a game of Town Traitor"))
-                continue
-            if any(gamelogs.bucket_of[player.ending_ident.role].startswith("Neutral") for player in game.players):
-                tears.append((attach, "Contains neutrals"))
-                continue
-
-            for player in game.players:
-                await self.bot.db.execute("INSERT OR IGNORE INTO Names VALUES (?, (SELECT COALESCE(MAX(player), 0) + 1 FROM Names))", (player.account_name,))
-
-            gist = gist_of(game)
-            row = (gist, digest, message_count, game, gamelogs.version, game.victor, bool(game.hunt_reached))
             try:
-                await self.bot.db.execute("INSERT INTO Games (gist, from_log, first_log, message_count, analysis, analysis_version, victor, hunt_reached) VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, ?7)", row)
-            except aiosqlite.IntegrityError:
-                existing_count, = await (await self.bot.db.execute("SELECT message_count FROM Games WHERE gist = ?", (gist,))).fetchone()  # type: ignore
-                if "!force" in message.content or message_count >= existing_count:
-                    await self.bot.db.execute("UPDATE Games SET from_log = ?2, message_count = ?3, analysis = ?4, analysis_version = ?5, victor = ?6, hunt_reached = ?7 WHERE gist = ?1", row)
-            else:
-                c += 1
+                c += await self.see_log(digest, clean_content)
+            except NotAGameError as e:
+                tears.append((attach, str(e)))
 
-            await self.bot.db.execute("UPDATE Gamelogs SET game = ? WHERE hash = ?", (gist, digest))
-            await self.bot.db.commit()
-
-        if c:
-            self.bot.dispatch("saw_games")
         return c, tears
 
     @commands.Cog.listener()
@@ -198,6 +198,8 @@ class Gamelogs(commands.Cog):
         async for message in channel.history(limit=None, after=discord.Object(id=start)):
             added, _ = await self.see_message(message)
             c += added
+        if c:
+            self.bot.dispatch("saw_games")
         log.info("caught up on %d games", c)
 
     @commands.Cog.listener()
@@ -206,6 +208,8 @@ class Gamelogs(commands.Cog):
             return
         added, tears = await self.see_message(message)
         log.info("added %d games from %d (issues: %r)", added, message.id, tears)
+        if added:
+            self.bot.dispatch("saw_games")
         if tears:
             await message.channel.send("\n".join(f"- {attach}: {tear}" for attach, tear in tears))
 

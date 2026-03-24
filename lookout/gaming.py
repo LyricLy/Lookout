@@ -24,8 +24,8 @@ class ReglePanel(ViewContainer):
         players = sorted(self.game.players, key=lambda p: (
             (i := p.starting_ident).faction == gamelogs.coven,
             i.role.default_faction == gamelogs.coven,
-            gamelogs.bucket_of[i.role] == "Coven Deception",
-            gamelogs.bucket_of[i.role],
+            gamelogs.bucket_of(i.role) == "Coven Deception",
+            gamelogs.bucket_of(i.role),
             i.role.name,
             p.account_name,
         ))
@@ -35,7 +35,7 @@ class ReglePanel(ViewContainer):
                 emoji = config.tt_emoji
                 role = f"{player.starting_ident.role} (TT)"
             else:
-                emoji = config.bucket_emoji[gamelogs.bucket_of[player.starting_ident.role]]
+                emoji = config.bucket_emoji[gamelogs.bucket_of(player.starting_ident.role)]
                 role = player.starting_ident
             lines.append(f"{emoji} {('\u200b'*obscure).join(player.account_name)} - {role}")
         self.display.children[0].content = f"# {header}\n{'\n'.join(lines)}"  # type: ignore

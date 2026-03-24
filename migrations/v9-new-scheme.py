@@ -57,7 +57,7 @@ async def migrate(db: aiosqlite.Connection):
             except gamelogs.BadLogError:
                 continue
 
-            if game.modifiers != ["Town Traitor"] or any(gamelogs.bucket_of[player.ending_ident.role].startswith("Neutral") for player in game.players):
+            if game.modifiers != ["Town Traitor"] or any(gamelogs.bucket_of(player.ending_ident.role).startswith("Neutral") for player in game.players):
                 continue
 
             gist = gist_of(game)

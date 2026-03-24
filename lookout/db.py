@@ -87,7 +87,7 @@ def de_faction(faction: str | None) -> gamelogs.Faction | None:
 
 def de_ident(ident: JIdentity) -> gamelogs.Identity:
     return gamelogs.Identity(
-        gamelogs.by_name[ident["role"]],
+        gamelogs.by_name(ident["role"]),
         de_faction(ident["faction"]),
     )
 
@@ -148,7 +148,7 @@ async def connect(path: str) -> aiosqlite.Connection:
     aiosqlite.register_adapter(gamelogs.GameResult, lambda game: msgpack.packb(ser_game_result(game)))
     aiosqlite.register_converter("GAME", lambda data: de_game_result(msgpack.unpackb(data)))
     aiosqlite.register_adapter(gamelogs.Role, lambda role: role.name)
-    aiosqlite.register_converter("ROLE", lambda s: gamelogs.by_name[s.decode()])
+    aiosqlite.register_converter("ROLE", lambda s: gamelogs.by_name(s.decode()))
     aiosqlite.register_adapter(gamelogs.Faction, ser_faction)
     aiosqlite.register_converter("FACTION", lambda s: de_faction(s.decode()))
     aiosqlite.register_adapter(dict, msgpack.packb)
