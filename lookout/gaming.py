@@ -23,7 +23,7 @@ class ReglePanel(ViewContainer):
     def draw_players(self, header: str, *, obscure: bool = False) -> None:
         players = sorted(self.game.players, key=lambda p: (
             (i := p.starting_ident).faction == gamelogs.coven,
-            i.role.default_faction == gamelogs.coven,
+            (gamelogs.town, gamelogs.coven, gamelogs.apocalypse).index(i.role.default_faction),
             gamelogs.bucket_of(i.role) == "Coven Deception",
             gamelogs.bucket_of(i.role),
             i.role.name,
@@ -31,7 +31,7 @@ class ReglePanel(ViewContainer):
         ))
         lines = []
         for player in players:
-            if player.starting_ident.is_wrong_faction():
+            if player.starting_ident.is_tt():
                 emoji = config.tt_emoji
                 role = f"{player.starting_ident.role} (TT)"
             else:

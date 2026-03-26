@@ -128,6 +128,9 @@ class SearchResults(ViewContainer):
             case _, True, gamelogs.Outcome.HEX_BOMB:
                 outcome = "Hex bomb in hunt • Coven wins"
                 thumbnail = "hex_bomb_hunt.png"
+            case _, _, gamelogs.Outcome.DEATH:
+                outcome = "Town's souls claimed • Coven wins"
+                thumbnail = "death_win.png"
 
             case gamelogs.town, True, _:
                 outcome = "TT died in hunt • Town wins"
@@ -158,7 +161,7 @@ class SearchResults(ViewContainer):
             death = "-#"*bool(player.died)
             obsc = ('\u200b'*obscure).join
             role = f"{player.starting_ident.role} {player.ending_ident.role}" if player.starting_ident != player.ending_ident else f"{player.starting_ident.role}"
-            faction = " (TT)"*player.starting_ident.is_wrong_faction()
+            faction = " (TT)"*player.starting_ident.is_tt()
             mark = FOOTNOTES[bl[0]] if (bl := discord.utils.find(lambda t: player.account_name in t[1][1], enumerate(bl_threads))) else ""
             rollout.append(f"{death} - [{player.number}] {obsc(player.game_name)} ({obsc(player.account_name)}{mark}) - {bold}{role}{faction}{bold}")
 

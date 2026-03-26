@@ -198,8 +198,6 @@ class TopPaginator(ViewContainer):
                         n = specifier
                     case "random town":
                         n = "Town"
-                    case "random coven":
-                        n = "Coven"
                     case _ if specifier:
                         n = f"{specifier} {bucket.title()}"
                     case _:
@@ -470,7 +468,7 @@ class Stats(commands.Cog):
                 - Overall {overall}
                 - Town {await self.winrate_in(player, IdentitySpecifier().with_faction(gamelogs.town))}
                 - Purple {await self.winrate_in(player, IdentitySpecifier().with_faction(gamelogs.coven))}
-                  - Coven {await self.winrate_in(player, IdentitySpecifier().where(lambda role: role.default_faction == gamelogs.coven))}
+                  - Coven {await self.winrate_in(player, IdentitySpecifier().where(lambda role: role.default_faction != gamelogs.town))}
                   - TT {await self.winrate_in(player, IdentitySpecifier().where(lambda role: role.default_faction == gamelogs.town).with_faction(gamelogs.coven))}
             """))
             embed.add_field(name="Winrates in hunt", value=textwrap.dedent(f"""

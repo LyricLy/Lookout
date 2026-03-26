@@ -162,8 +162,9 @@ class Identity:
         object.__setattr__(self, "role", role)
         object.__setattr__(self, "faction", faction if faction != unknown else role.default_faction)
 
-    def is_wrong_faction(self) -> bool:
-        return self.faction != self.role.default_faction
+    def is_tt(self) -> bool:
+        # TODO: this should be its own flag
+        return self.faction == coven and self.role.default_faction == town
 
     def __str__(self) -> str:
         if self.role.default_faction == self.faction:

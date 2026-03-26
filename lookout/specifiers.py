@@ -8,7 +8,7 @@ from discord.ext import commands
 from .player_info import PlayerInfo
 
 
-ROLES = [r for r in gamelogs.all_roles if r.default_faction in (gamelogs.town, gamelogs.coven)]
+ROLES = [r for r in gamelogs.all_roles if r.default_faction in (gamelogs.town, gamelogs.coven, gamelogs.apocalypse)]
 
 BUCKET_ALIASES = {
     "ti": "town investigative",
@@ -27,8 +27,13 @@ BUCKET_ALIASES = {
     "co": "coven outlier",
     "cc": "common coven",
     "rc": "random coven",
-    "cov": "random coven",
-    "coven": "random coven",
+    "cov": "coven",
+
+    "na": "neutral apocalypse",
+    "apoc": "neutral apocalypse",
+    "apocalypse": "neutral apocalypse",
+    "ra": "neutral apocalypse",
+    "random apocalypse": "neutral apocalypse",
 
     "coro": "coroner",
     "inv": "investigator",
@@ -88,6 +93,10 @@ BUCKET_ALIASES = {
     "wl": "wildling",
 
     "cult": "cultist",
+
+    "bers": "berserker",
+    "sc": "soul collector",
+    "pb": "plaguebearer",
 }
 
 STRICT_BUCKETS = {
@@ -96,6 +105,8 @@ STRICT_BUCKETS = {
     "random town": {r for r in ROLES if r.default_faction == gamelogs.town},
     "common coven": {r for r in ROLES if r.default_faction == gamelogs.coven and gamelogs.bucket_of(r) not in ("Coven Killing", "Coven Power")},
     "random coven": {r for r in ROLES if r.default_faction == gamelogs.coven},
+    "neutral apocalypse": {r for r in ROLES if r.default_faction == gamelogs.apocalypse},
+    "coven": {r for r in ROLES if r.default_faction != gamelogs.town},
 }
 
 PURE_BUCKETS = {

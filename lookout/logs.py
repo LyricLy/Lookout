@@ -32,9 +32,9 @@ def datetime_of_filename(filename: str) -> datetime.datetime | None:
 
 btos2_roles = {"Pacifist", "Banshee", "Warlock", "Inquisitor", "Auditor", "Judge", "Starspawn", "Jackal"}
 
-def parse_game(text: str) -> tuple[gamelogs.GameResult, int]:
+def parse_game(text: str, *, pandora: bool = False) -> tuple[gamelogs.GameResult, int]:
     try:
-        return gamelogs.parse(text, gamelogs.ResultAnalyzer() & gamelogs.MessageCountAnalyzer(), clean_tags=False)
+        return gamelogs.parse(text, gamelogs.ResultAnalyzer(pandora=pandora) & gamelogs.MessageCountAnalyzer(), clean_tags=False)
     except gamelogs.InvalidHTMLError:
         raise NotAGameError("File is not valid HTML")
     except gamelogs.NotLogError:
@@ -126,12 +126,12 @@ class Gamelogs(commands.Cog):
 
         return Gamelog(content, filename, url, Timecode(*timecode))
 
-    async def see_log(self, digest: str, clean_content: str, *, force: bool = False) -> bool:
-        game, message_count = parse_game(clean_content)
+    async def see_log(self, digest: str, clean_content: str, *, pandora: bool = False, force: bool = False) -> bool:
+        game, message_count = parse_game(clean_content, pandora=pandora)
 
         if game.modifiers != ["Town Traitor"]:
             raise NotAGameError("Not a game of Town Traitor")
-        if any(gamelogs.bucket_of(player.ending_ident.role).startswith("Neutral") for player in game.players):
+        if any(player.ending_ident.faction not in (gamelogs.town, gamelogs.coven) for player in game.players):
             raise NotAGameError("Contains neutrals")
 
         for player in game.players:
@@ -183,7 +183,7 @@ class Gamelogs(commands.Cog):
                 continue
 
             try:
-                c += await self.see_log(digest, clean_content)
+                c += await self.see_log(digest, clean_content, pandora="!pandora" in message.content, force="!force" in message.content)
             except NotAGameError as e:
                 tears.append((attach, str(e)))
 
