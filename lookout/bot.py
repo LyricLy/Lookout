@@ -65,7 +65,8 @@ extensions = [
 class Lookout(commands.Bot):
     def __init__(self) -> None:
         super().__init__(
-            command_prefix="lo!",
+            command_prefix=["lo!", "lO!", "Lo!", "LO!"],
+            case_insensitive=True,
             description="Official bot of the TT server, by LyricLy",
             allowed_mentions=discord.AllowedMentions.none(),
             intents=discord.Intents(

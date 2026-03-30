@@ -204,7 +204,7 @@ class SearchResults(ViewContainer):
         self.remove_item(self.ar)
 
 
-class SearchQuery(commands.FlagConverter):
+class SearchQuery(commands.FlagConverter, case_insensitive=True):
     chat: list[str] = []
     author: list[PlayerSpecifier] = commands.flag(name="from", default=[])
     has: list[PlayerSpecifier] = commands.flag(default=[], positional=True)
