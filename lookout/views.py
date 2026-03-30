@@ -1,3 +1,5 @@
+import asyncio
+
 import discord
 
 
@@ -38,7 +40,7 @@ class ContainerView[T: ViewContainer](discord.ui.LayoutView):
     message: discord.Message
     _files: list[File]
 
-    def __init__(self, owner: discord.User | discord.Member, container: T) -> None:
+    def __init__(self, owner: discord.abc.User, container: T) -> None:
         super().__init__()
         self.owner = owner
         self.container = container
@@ -64,3 +66,32 @@ class ContainerView[T: ViewContainer](discord.ui.LayoutView):
     async def on_timeout(self):
         await self.container.destroy()
         await self.message.edit(**self.edit_args())
+
+
+class ConfirmationView(discord.ui.View):
+    message: discord.Message
+
+    def __init__(self, owner: discord.abc.User) -> None:
+        super().__init__(timeout=30)
+        self.owner = owner
+        self.event = asyncio.Event()
+
+    def wait(self):
+        return self.event.wait()
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user != self.owner:
+            await interaction.response.send_message("You can't agree to this action.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="Yes", style=discord.ButtonStyle.green)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        self.event.set()
+        button.disabled = True
+        await interaction.response.edit_message(view=self)
+        self.stop()
+
+    async def on_timeout(self):
+        self.confirm.disabled = True
+        await self.message.edit(view=self)

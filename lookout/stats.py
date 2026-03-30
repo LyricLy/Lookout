@@ -19,7 +19,7 @@ from .bot import Lookout
 from .logs import gist_of, Timecode, Gamelogs
 from .player_info import PlayerInfo
 from .specifiers import PURE_BUCKETS, ROLES, IdentitySpecifier
-from .views import ViewContainer, ContainerView
+from .views import ViewContainer, ContainerView, ConfirmationView
 
 
 log = logging.getLogger(__name__)
@@ -559,9 +559,22 @@ class Stats(commands.Cog):
 
     @commands.command()
     @commands.check_any(commands.has_role("Game host"), commands.is_owner())
-    async def connect(self, ctx: commands.Context, who: discord.Member, *, player: PlayerInfo) -> None:
+    async def connect(self, ctx: commands.Context, who: discord.Member, *, player: PlayerInfo | str) -> None:
         """Associate a player with their Discord account."""
-        await self.bot.db.execute("INSERT OR REPLACE INTO DiscordConnections (discord_id, player) VALUES (?, ?)", (who.id, player.id))
+        if isinstance(player, PlayerInfo):
+            player_id = player.id
+        else:
+            view = ConfirmationView(ctx.author)
+            view.message = await ctx.send(f"I don't know who that is. Really connect to '{player}'?", view=view)
+            if not await view.wait():
+                return
+
+            player_id, = await (await self.bot.db.execute(
+                "INSERT INTO Names VALUES (?, (SELECT COALESCE(MAX(player), 0) + 1 FROM Names)) RETURNING player",
+                (player,),
+            )).fetchone()  # type: ignore
+
+        await self.bot.db.execute("INSERT OR REPLACE INTO DiscordConnections (discord_id, player) VALUES (?, ?)", (who.id, player_id))
         await self.bot.db.commit()
         await ctx.send(":+1:")
 
