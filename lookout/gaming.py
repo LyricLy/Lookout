@@ -5,7 +5,7 @@ import gamelogs
 from discord.ext import commands
 
 import config
-from .bot import Lookout
+from .bot import *
 from .logs import Gamelogs, gist_of
 from .views import ViewContainer, ContainerView
 
@@ -42,7 +42,8 @@ class ReglePanel(ViewContainer):
 
     ar = discord.ui.ActionRow()
 
-    async def finish(self, guess: gamelogs.Faction, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+    @needs_db
+    async def finish(self, conn: Connection, guess: gamelogs.Faction, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         logs: Gamelogs = self.bot.get_cog("Gamelogs")  # type: ignore
         log = await logs.fetch_log(self.game)
 
@@ -59,8 +60,7 @@ class ReglePanel(ViewContainer):
         self.add_item(log.to_item())
         self._children.insert(self._children.index(self.sep), self._children.pop())
 
-        await self.bot.db.execute("INSERT INTO RegleGames (player_id, guessed, correct, gist) VALUES (?, ?, ?, ?)", (interaction.user.id, repr(guess), repr(self.game.victor), gist_of(self.game)))
-        await self.bot.db.commit()
+        await conn.execute("INSERT INTO RegleGames (player_id, guessed, correct, gist) VALUES (?, ?, ?, ?)", (interaction.user.id, repr(guess), repr(self.game.victor), gist_of(self.game)))
 
         self.view.stop()  # type: ignore
         await interaction.response.edit_message(**self.edit_args())
@@ -89,13 +89,11 @@ class Gaming(commands.Cog):
         self.bot = bot
 
     @commands.command()
-    async def regle(self, ctx: commands.Context) -> None:
+    @needs_db
+    async def regle(self, conn: Connection, ctx: commands.Context) -> None:
         """Guess which faction won a game, given only the lineup."""
         victor = random.choice([gamelogs.town, gamelogs.coven])
-        game, = await (await self.bot.db.execute(  # type: ignore
-            "SELECT analysis FROM Games WHERE victor = ?1 LIMIT 1 OFFSET ABS(RANDOM()) % (SELECT COUNT(*) FROM Games WHERE victor = ?1)",
-            (victor,),
-        )).fetchone()
+        game, = await self.bot.db.fetchone("SELECT analysis FROM Games WHERE victor = ?1 LIMIT 1 OFFSET ABS(RANDOM()) % (SELECT COUNT(*) FROM Games WHERE victor = ?1)", (victor,))  # type: ignore
         view = ContainerView(ctx.author, ReglePanel(self.bot, game))
         view.message = await ctx.send(view=view)
 

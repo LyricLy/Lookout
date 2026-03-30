@@ -13,7 +13,7 @@ import gamelogs
 from discord.ext import commands
 
 import config
-from .bot import Lookout
+from .bot import *
 from .logs import Gamelogs, gist_of
 from .specifiers import IdentitySpecifier, PlayerSpecifier, BUCKETS
 from .stats import Stats, PlayerInfo
@@ -92,9 +92,10 @@ class SearchResults(ViewContainer):
     sep = discord.ui.Separator(spacing=discord.SeparatorSpacing.large)
     underfile = discord.ui.TextDisplay("")
 
-    def __init__(self, bot: Lookout, results: list[gamelogs.GameResult]) -> None:
+    def __init__(self, logs: Gamelogs, results: list[gamelogs.GameResult]) -> None:
         super().__init__()
-        self.bot = bot
+        self.logs = logs
+        self.bot = logs.bot
         self.results = results
         self.page = 0
         self.next.disabled = len(results) == 1
@@ -103,11 +104,10 @@ class SearchResults(ViewContainer):
     def has_page(self, num: int) -> bool:
         return 0 <= num < len(self.results)
 
-    async def draw(self, *, obscure: bool = False) -> None:
+    @needs_db
+    async def draw(self, conn: Connection, *, obscure: bool = False) -> None:
         game = self.results[self.page]
-
-        logs: Gamelogs = self.bot.get_cog("Gamelogs")  # type: ignore
-        log = await logs.fetch_log(game)
+        log = await self.logs.fetch_log(game)
 
         self.accent_colour = discord.Colour(0x06e00c if game.victor == gamelogs.town else 0xb545ff if game.victor == gamelogs.coven else 0x06cae0)
 
@@ -150,8 +150,8 @@ class SearchResults(ViewContainer):
                 thumbnail = "who_wins.png"
 
         bl_threads = []
-        async for thread_id, in await self.bot.db.execute("SELECT thread_id FROM BlacklistGames WHERE gist = ?", (gist_of(game),)):
-            players = [name async for name, in await self.bot.db.execute("SELECT account_name FROM Blacklists WHERE thread_id = ?", (thread_id,))]
+        for thread_id, in await conn.fetchall("SELECT thread_id FROM BlacklistGames WHERE gist = ?", (gist_of(game),)):
+            players = [name for name, in await conn.fetchall("SELECT account_name FROM Blacklists WHERE thread_id = ?", (thread_id,))]
             bl_threads.append((thread_id, players))
         bl_section = "".join(f"\n\\{FOOTNOTES[i]} Player blacklisted for this game: <#{thread_id}>" for i, (thread_id, _) in enumerate(bl_threads))
 
@@ -216,7 +216,7 @@ class SearchQuery(commands.FlagConverter, case_insensitive=True):
     team: tuple[PlayerInfo, ...] = ()
     count: list[tuple[int, str]] = []
 
-    async def search(self, bot: Lookout) -> list[gamelogs.GameResult]:
+    async def search(self, conn: Connection, stats: Stats) -> list[gamelogs.GameResult]:
         joins = []
         where = []
         p = {}
@@ -273,8 +273,7 @@ class SearchQuery(commands.FlagConverter, case_insensitive=True):
             p[f"count_{i}"] = count
             p.update(p2)
 
-        stats: Stats = bot.get_cog("Stats")  # type: ignore
-        cur = stats.games(f"{' '.join(joins)} WHERE ({' AND '.join(where) if where else '1'}) GROUP BY gist ORDER BY rowid DESC", p)
+        games = stats.games(f"{' '.join(joins)} WHERE ({' AND '.join(where) if where else '1'}) GROUP BY gist ORDER BY rowid DESC", p)
 
         if self.chat:
             patterns = []
@@ -285,11 +284,8 @@ class SearchQuery(commands.FlagConverter, case_insensitive=True):
                 )
 
             results = []
-            async for game in cur:
-                content, = await (await bot.db.execute(  # type: ignore
-                    "SELECT clean_content FROM Gamelogs INNER JOIN Games ON hash = from_log WHERE gist = ?",
-                    (gist_of(game),),
-                )).fetchone()
+            async for game in games:
+                content, = await conn.fetchone("SELECT clean_content FROM Gamelogs INNER JOIN Games ON hash = from_log WHERE gist = ?", (gist_of(game),))  # type: ignore 
 
                 for pattern in patterns:
                     for m in re2.finditer(pattern, content, RE_OPTIONS):
@@ -311,7 +307,7 @@ class SearchQuery(commands.FlagConverter, case_insensitive=True):
                 else:
                     results.append(game)
         else:
-            results = [game async for game in cur]
+            results = [game async for game in games]
 
         return results
 
@@ -325,7 +321,8 @@ class Search(commands.Cog):
         self.bot = bot
 
     @commands.command()
-    async def search(self, ctx: commands.Context, *, query: SearchQuery) -> None:
+    @needs_db
+    async def search(self, conn: Connection, ctx: commands.Context, *, query: SearchQuery) -> None:
         """Search for games.
 
         A flag-based syntax is used, similar to Discord's built-in search functionality. The following flags are supported:
@@ -361,11 +358,14 @@ class Search(commands.Cog):
         count:
         Look for games with a minimum number of a given role or alignment.
         """
-        results = await query.search(self.bot)
+        logs: Gamelogs = self.bot.get_cog("Gamelogs")  # type: ignore
+        stats: Stats = self.bot.get_cog("Stats")  # type: ignore
+
+        results = await query.search(conn, stats)
         if not results:
             await ctx.send("No results.")
             return
-        view = ContainerView(ctx.author, SearchResults(self.bot, results))
+        view = ContainerView(ctx.author, SearchResults(logs, results))
         await view.container.draw()
         view.message = await ctx.send(**view.send_args())
 

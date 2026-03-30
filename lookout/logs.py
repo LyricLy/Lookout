@@ -2,17 +2,17 @@ import datetime
 import hashlib
 import logging
 import re
+import sqlite3
 import io
 from dataclasses import dataclass
 from typing import Iterator, Self
 
-import aiosqlite
 import discord
 import gamelogs
 from discord.ext import commands
 
 import config
-from .bot import Lookout
+from .bot import *
 from .views import File
 
 
@@ -105,8 +105,9 @@ class Gamelogs(commands.Cog):
 
         return True
 
-    async def fetch_log(self, game: gamelogs.GameResult) -> Gamelog:
-        r = await (await self.bot.db.execute("""
+    @needs_db
+    async def fetch_log(self, conn: Connection, game: gamelogs.GameResult) -> Gamelog:
+        r = await conn.fetchone("""
             SELECT
                 Best.channel_id, Best.message_id, Best.attachment_id, Best.filename, Best.clean_content,
                 First.message_id, First.filename_time
@@ -114,7 +115,7 @@ class Gamelogs(commands.Cog):
             INNER JOIN Gamelogs AS Best ON Best.hash = from_log
             INNER JOIN Gamelogs AS First ON First.hash = first_log
             WHERE gist = ?
-        """, (gist_of(game),))).fetchone()
+        """, (gist_of(game),))
         if r is None:
             raise ValueError("game not found")
 
@@ -126,7 +127,8 @@ class Gamelogs(commands.Cog):
 
         return Gamelog(content, filename, url, Timecode(*timecode))
 
-    async def see_log(self, digest: str, clean_content: str, *, pandora: bool = False, force: bool = False) -> bool:
+    @needs_db
+    async def see_log(self, conn: Connection, digest: str, clean_content: str, *, pandora: bool = False, force: bool = False) -> bool:
         game, message_count = parse_game(clean_content, pandora=pandora)
 
         if game.modifiers != ["Town Traitor"]:
@@ -135,25 +137,25 @@ class Gamelogs(commands.Cog):
             raise NotAGameError("Contains neutrals")
 
         for player in game.players:
-            await self.bot.db.execute("INSERT OR IGNORE INTO Names VALUES (?, (SELECT COALESCE(MAX(player), 0) + 1 FROM Names))", (player.account_name,))
+            await conn.execute("INSERT OR IGNORE INTO Names VALUES (?, (SELECT COALESCE(MAX(player), 0) + 1 FROM Names))", (player.account_name,))
 
         gist = gist_of(game)
         row = (gist, digest, message_count, game, gamelogs.version, game.victor, bool(game.hunt_reached))
 
         try:
-            await self.bot.db.execute("INSERT INTO Games (gist, from_log, first_log, message_count, analysis, analysis_version, victor, hunt_reached) VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, ?7)", row)
-        except aiosqlite.IntegrityError:
+            await conn.execute("INSERT INTO Games (gist, from_log, first_log, message_count, analysis, analysis_version, victor, hunt_reached) VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, ?7)", row)
+        except sqlite3.IntegrityError:
             existing_count, = await (await self.bot.db.execute("SELECT message_count FROM Games WHERE gist = ?", (gist,))).fetchone()  # type: ignore
             if force or message_count >= existing_count:
-                await self.bot.db.execute("UPDATE Games SET from_log = ?2, message_count = ?3, analysis = ?4, analysis_version = ?5, victor = ?6, hunt_reached = ?7 WHERE gist = ?1", row)
+                await conn.execute("UPDATE Games SET from_log = ?2, message_count = ?3, analysis = ?4, analysis_version = ?5, victor = ?6, hunt_reached = ?7 WHERE gist = ?1", row)
             return False
         else:
             return True
         finally:
-            await self.bot.db.execute("UPDATE Gamelogs SET game = ? WHERE hash = ?", (gist, digest))
-            await self.bot.db.commit()
+            await conn.execute("UPDATE Gamelogs SET game = ? WHERE hash = ?", (gist, digest))
 
-    async def see_message(self, message: discord.Message, *, cry: bool = False) -> tuple[int, list[str]]:
+    @needs_db
+    async def see_message(self, conn: Connection, message: discord.Message, *, cry: bool = False) -> tuple[int, list[str]]:
         c = 0
         tears = []
 
@@ -172,11 +174,10 @@ class Gamelogs(commands.Cog):
 
             digest = hashlib.sha256(clean_content.encode()).hexdigest()
             filename_time = datetime_of_filename(attach.filename)
-            await self.bot.db.execute(
+            await conn.execute(
                 "INSERT OR IGNORE INTO Gamelogs (hash, filename, channel_id, message_id, attachment_id, filename_time, uploader, clean_content) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (digest, attach.filename, message.channel.id, message.id, attach.id, filename_time, message.author.id, clean_content),
             )
-            await self.bot.db.commit()
 
             if not filename_time:
                 tears.append((attach, "Filename does not contain date and time"))
@@ -190,8 +191,9 @@ class Gamelogs(commands.Cog):
         return c, tears
 
     @commands.Cog.listener()
-    async def on_ready(self) -> None:
-        start, = await (await self.bot.db.execute("SELECT COALESCE(MAX(message_id), 0) FROM Gamelogs")).fetchone()  # type: ignore
+    @needs_db
+    async def on_ready(self, conn: Connection) -> None:
+        start, = await conn.fetchone("SELECT COALESCE(MAX(message_id), 0) FROM Gamelogs")  # type: ignore
         channel = self.bot.get_partial_messageable(config.gamelog_channel_id)
         log.info("catching up")
         c = 0
@@ -215,10 +217,11 @@ class Gamelogs(commands.Cog):
 
     @commands.command()
     @commands.is_owner()
-    async def gamedump(self, ctx: commands.Context) -> None:
+    @needs_db
+    async def gamedump(self, conn: Connection, ctx: commands.Context) -> None:
         """Dump logs from the database into a folder."""
         cache = {}
-        async for filename, content, uploader in await self.bot.db.execute("SELECT filename, clean_content, uploader FROM Gamelogs"):
+        for filename, content, uploader in await conn.fetchall("SELECT filename, clean_content, uploader FROM Gamelogs"):
             if uploader in cache:
                 name = cache[uploader]
             else:

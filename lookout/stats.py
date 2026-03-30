@@ -4,18 +4,18 @@ import functools
 import math
 import logging
 import textwrap
+import sqlite3
 from collections import defaultdict, Counter
 from dataclasses import dataclass, field
 from typing import AsyncIterator, Literal, Self, Sequence, Any, Protocol
 
-import aiosqlite
 import discord
 import gamelogs
 from discord.ext import commands
 from openskill.models import PlackettLuce
 
 import config
-from .bot import Lookout
+from .bot import *
 from .logs import gist_of, Timecode, Gamelogs
 from .player_info import PlayerInfo
 from .specifiers import PURE_BUCKETS, ROLES, IdentitySpecifier
@@ -149,6 +149,7 @@ class TopPaginator(ViewContainer):
     def __init__(self, stats: Stats, crit: Criterion, played: bool) -> None:
         super().__init__(accent_colour=discord.Colour(0xfce703))
         self.stats = stats
+        self.bot = stats.bot
         self.crit: Criterion = crit
         self.played = isinstance(crit, IdentitySpecifier) and crit.won is not None or played
         self.per_page = 15
@@ -158,24 +159,25 @@ class TopPaginator(ViewContainer):
         self.go_to_page(0)
         await self.draw()
 
-    async def decorate_players(self) -> list[tuple[DisplayablePlayer, Key]]:
+    @needs_db
+    async def decorate_players(self, conn: Connection) -> list[tuple[DisplayablePlayer, Key]]:
         if self.crit == "rating":
             return [(player, player.ordinal()) for player in await self.stats.fetch_players(self.stats.now()) if player.rank is not None]
 
         elif self.crit == "regle":
-            cur = await self.stats.bot.db.execute("SELECT player_id, COALESCE(SUM(guessed = correct), 0), COUNT(*) FROM RegleGames GROUP BY player_id")
-            return [(ReglePlayerInfo(player), n if self.played else Winrate(s, n)) async for player_id, s, n in cur if (player := self.stats.bot.get_user(player_id))]
+            rs = await conn.fetchall("SELECT player_id, COALESCE(SUM(guessed = correct), 0), COUNT(*) FROM RegleGames GROUP BY player_id")
+            return [(ReglePlayerInfo(player), n if self.played else Winrate(s, n)) for player_id, s, n in rs if (player := self.stats.bot.get_user(player_id))]
 
         c, p = self.crit.to_sql()
         hidden_clause = "NOT EXISTS(SELECT 1 FROM Hidden WHERE player = Appearances.player) AND "
         if self.played:
             if self.crit.won is None:
                 hidden_clause = ""
-            cur = await self.stats.bot.db.execute(f"SELECT player, COUNT(*) FROM Appearances WHERE {hidden_clause}{c} GROUP BY player", p)
-            return [(await self.stats.fetch_player(player, self.stats.now(), with_rank=False), c) async for player, c in cur]
+            rs = await conn.fetchall(f"SELECT player, COUNT(*) FROM Appearances WHERE {hidden_clause}{c} GROUP BY player", p)
+            return [(await self.stats.fetch_player(player, self.stats.now(), with_rank=False), c) for player, c in rs]
         else:
-            cur = await self.stats.bot.db.execute(f"SELECT player, COALESCE(SUM(won), 0), COUNT(*) FROM Appearances WHERE {hidden_clause}{c} GROUP BY player", p)
-            return [(await self.stats.fetch_player(player, self.stats.now(), with_rank=False), Winrate(s, n)) async for player, s, n in cur]
+            rs = await conn.fetchall(f"SELECT player, COALESCE(SUM(won), 0), COUNT(*) FROM Appearances WHERE {hidden_clause}{c} GROUP BY player", p)
+            return [(await self.stats.fetch_player(player, self.stats.now(), with_rank=False), Winrate(s, n)) for player, s, n in rs]
 
     def key_desc(self) -> str:
         if self.crit == "rating":
@@ -283,25 +285,27 @@ class Stats(commands.Cog):
     async def cog_unload(self) -> None:
         self.catchup_task.cancel()
 
-    async def update_game(self, gist: str, from_log: str) -> None:
-        content, = await (await self.bot.db.execute("SELECT clean_content FROM Gamelogs WHERE hash = ?", (from_log,))).fetchone()  # type: ignore
+    @needs_db
+    async def update_game(self, conn: Connection, gist: str, from_log: str) -> None:
+        content, = await conn.fetchone("SELECT clean_content FROM Gamelogs WHERE hash = ?", (from_log,))  # type: ignore
         try:
             game, message_count = await asyncio.to_thread(gamelogs.parse, content, gamelogs.ResultAnalyzer() & gamelogs.MessageCountAnalyzer(), clean_tags=False)
         except gamelogs.BadLogError:
             log.exception("failed to update game from log %s", from_log)
         else:
             assert gist_of(game) == gist
-            await self.bot.db.execute("UPDATE Games SET analysis = ?, message_count = ?, analysis_version = ? WHERE gist = ?", (game, message_count, gamelogs.version, gist))
-            await self.bot.db.commit()
+            await conn.execute("UPDATE Games SET analysis = ?, message_count = ?, analysis_version = ? WHERE gist = ?", (game, message_count, gamelogs.version, gist))
             log.info("updated game from log %s to version %d", from_log, gamelogs.version)
 
     async def games(self, injection: str = "", params: Sequence[object] | dict[str, Any] = ()) -> AsyncIterator[gamelogs.GameResult]:
-        async for gist, game, version, from_log in await self.bot.db.execute(f"SELECT gist, analysis, analysis_version, from_log FROM Games {injection}", params):
-            if version < gamelogs.version:
-                asyncio.create_task(self.update_game(gist, from_log))
-            yield game
+        async with self.bot.db.acquire() as conn:
+            for gist, game, version, from_log in await conn.fetchall(f"SELECT gist, analysis, analysis_version, from_log FROM Games {injection}", params):
+                if version < gamelogs.version:
+                    asyncio.create_task(self.update_game(gist, from_log))
+                yield game
 
-    async def run_game(self, game: gamelogs.GameResult):
+    @needs_db
+    async def run_game(self, conn: Connection, game: gamelogs.GameResult):
         logs: Gamelogs = self.bot.get_cog("Gamelogs")  # type: ignore
         log = await logs.fetch_log(game)
 
@@ -320,7 +324,7 @@ class Stats(commands.Cog):
         new_ratings = model.rate(ratings, ranks=[1, 2] if game.victor == gamelogs.town else [2, 1])
         for team, team_ratings in zip(teams, new_ratings):
             for (player, info), new_rating in zip(team, team_ratings):
-                await self.bot.db.execute("""
+                await conn.execute("""
                     INSERT OR REPLACE INTO Appearances (player, starting_role, ending_role, faction, game, account_name, game_name, won, saw_hunt, mu_after, sigma_after, timecode)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
@@ -329,8 +333,7 @@ class Stats(commands.Cog):
                     new_rating.mu, new_rating.sigma, *log.first_upload,
                 ))
 
-        await self.bot.db.execute("UPDATE Globals SET (last_update_message_id, last_update_filename_time) = (?, ?)", (log.first_upload.message_id, log.first_upload.filename_time))
-        await self.bot.db.commit()
+        await conn.execute("UPDATE Globals SET (last_update_message_id, last_update_filename_time) = (?, ?)", (log.first_upload.message_id, log.first_upload.filename_time))
 
     async def run_games(self):
         try:
@@ -361,8 +364,8 @@ class Stats(commands.Cog):
     def now(self) -> Timecode:
         return Timecode.from_datetime(self.prev_update())
 
-    async def _row_to_player_info(self, player: int, row: aiosqlite.Row | None) -> PlayerInfo:
-        r: aiosqlite.Row = row or defaultdict(lambda: None)  # type: ignore
+    async def _row_to_player_info(self, player: int, row: sqlite3.Row | None) -> PlayerInfo:
+        r: sqlite3.Row = row or defaultdict(lambda: None)  # type: ignore
         return PlayerInfo(
             player,
             r["rank"],
@@ -381,33 +384,39 @@ class Stats(commands.Cog):
     )
     RATINGS_WO_RANK = _RATINGS.format("(SELECT NULL as rank)")
 
-    async def fetch_player(self, player: int, at: Timecode, *, with_rank: bool = True) -> PlayerInfo:
-        r = await (await self.bot.db.execute(f"SELECT * FROM {Stats.RATINGS if with_rank else Stats.RATINGS_WO_RANK} WHERE player = ?", (*at, player,))).fetchone()
+    @needs_db
+    async def fetch_player(self, conn: Connection, player: int, at: Timecode, *, with_rank: bool = True) -> PlayerInfo:
+        r = await (await conn.execute(f"SELECT * FROM {Stats.RATINGS if with_rank else Stats.RATINGS_WO_RANK} WHERE player = ?", (*at, player,))).fetchone()
         return await self._row_to_player_info(player, r)
 
-    async def resolve_player_name(self, name: str) -> int | None:
-        r = await (await self.bot.db.execute("SELECT player FROM Names WHERE name = ?", (name,))).fetchone()
+    @needs_db
+    async def resolve_player_name(self, conn: Connection, name: str) -> int | None:
+        r = await (await conn.execute("SELECT player FROM Names WHERE name = ?", (name,))).fetchone()
         return r[0] if r else None
 
-    async def fetch_player_by_name(self, name: str, at: Timecode, *, with_rank: bool = True) -> PlayerInfo | None:
+    @needs_db
+    async def fetch_player_by_name(self, conn: Connection, name: str, at: Timecode, *, with_rank: bool = True) -> PlayerInfo | None:
         player = await self.resolve_player_name(name)
         return await self.fetch_player(player, at, with_rank=with_rank) if player else None
 
-    async def fetch_players(self, at: Timecode) -> list[PlayerInfo]:
-        cur = await self.bot.db.execute(f"SELECT * FROM {Stats.RATINGS}", (*at,))
-        return [await self._row_to_player_info(r["player"], r) async for r in cur]
+    @needs_db
+    async def fetch_players(self, conn: Connection, at: Timecode) -> list[PlayerInfo]:
+        rs = await conn.fetchall(f"SELECT * FROM {Stats.RATINGS}", (*at,))
+        return [await self._row_to_player_info(r["player"], r) for r in rs]
 
-    async def fetch_discord_players(self, at: Timecode) -> list[PlayerInfo]:
-        cur = await self.bot.db.execute(f"SELECT * FROM {Stats.RATINGS} WHERE EXISTS(SELECT 1 FROM DiscordConnections WHERE player = Ratings.player) ORDER BY player", (*at,))
-        return [await self._row_to_player_info(r["player"], r) async for r in cur]
+    @needs_db
+    async def fetch_discord_players(self, conn: Connection, at: Timecode) -> list[PlayerInfo]:
+        rs = await conn.fetchall(f"SELECT * FROM {Stats.RATINGS} WHERE EXISTS(SELECT 1 FROM DiscordConnections WHERE player = Ratings.player) ORDER BY player", (*at,))
+        return [await self._row_to_player_info(r["player"], r) for r in rs]
 
     @commands.command()
-    async def info(self, ctx: commands.Context) -> None:
+    @needs_db
+    async def info(self, conn: Connection, ctx: commands.Context) -> None:
         """General information and statistics on stored games."""
-        town_maj, coven_maj, town_hunt, coven_hunt = await (await self.bot.db.execute("""SELECT
+        town_maj, coven_maj, town_hunt, coven_hunt = await conn.fetchone("""SELECT
             SUM(victor = 'town' AND NOT hunt_reached), SUM(victor = 'coven' AND NOT hunt_reached),
             SUM(victor = 'town' AND hunt_reached), SUM(victor = 'coven' AND hunt_reached)
-        FROM Games""")).fetchone()  # type: ignore
+        FROM Games""")  # type: ignore
         total = town_maj + town_hunt + coven_maj + coven_hunt
 
         next_on = f", next on {discord.utils.format_dt(d)}" if (d := self.next_update()) else ""
@@ -428,16 +437,18 @@ class Stats(commands.Cog):
 
         await ctx.send(embed=embed)
 
-    async def winrate_in(self, player: PlayerInfo, spec: IdentitySpecifier = IdentitySpecifier()) -> Winrate:
+    @needs_db
+    async def winrate_in(self, conn: Connection, player: PlayerInfo, spec: IdentitySpecifier = IdentitySpecifier()) -> Winrate:
         c, p = spec.to_sql()
-        s, n = await (await self.bot.db.execute(  # type: ignore
+        s, n = await conn.fetchone(  # type: ignore
             f"SELECT COALESCE(SUM(won), 0), COUNT(*) FROM Appearances WHERE player = :player AND {c}",
             {"player": player.id, **p},
-        )).fetchone()
+        )
         return Winrate(s, n)
 
     @commands.command()
-    async def player(self, ctx: commands.Context, *, player: PlayerInfo) -> None:
+    @needs_db
+    async def player(self, conn: Connection, ctx: commands.Context, *, player: PlayerInfo) -> None:
         """Show information about a player."""
         embed = discord.Embed()
         names = await player.names()
@@ -445,7 +456,7 @@ class Stats(commands.Cog):
 
         r = None
         for name in names:
-            r = await (await self.bot.db.execute("SELECT thread_id FROM Blacklists WHERE account_name = ?", (name,))).fetchone()
+            r = await conn.fetchone("SELECT thread_id FROM Blacklists WHERE account_name = ?", (name,))
             if r:
                 break
 
@@ -495,71 +506,69 @@ class Stats(commands.Cog):
 
     @commands.command(name="is")
     @commands.is_owner()
-    async def _is(self, ctx: commands.Context, a: PlayerInfo, b: PlayerInfo) -> None:
+    @needs_db
+    async def _is(self, conn: Connection, ctx: commands.Context, a: PlayerInfo, b: PlayerInfo) -> None:
         """Treat 2 players as being the same from now on in statistics."""
         if a.id == b.id:
             await ctx.send("I know.")
             return
 
         # rerun the period we're about to clobber
-        tc, = await (await self.bot.db.execute("SELECT MIN(timecode) FROM Appearances WHERE player = ?", (b.id,))).fetchone()  # type: ignore
+        tc, = await conn.fetchone("SELECT MIN(timecode) FROM Appearances WHERE player = ?", (b.id,))  # type: ignore
         timecode = Timecode.from_str(tc)
-        await self.bot.db.execute(
+        await conn.execute(
             "UPDATE Globals SET (last_update_message_id, last_update_filename_time) = (?, ?)",
             (timecode.message_id, timecode.filename_time - datetime.timedelta(seconds=1)),
         )
 
-        await self.bot.db.execute("UPDATE OR IGNORE DiscordConnections SET player = ? WHERE player = ?", (a.id, b.id))
-        await self.bot.db.execute("UPDATE Names SET player = ? WHERE player = ?", (a.id, b.id))
-        await self.bot.db.execute("DELETE FROM Appearances WHERE player = ?", (b.id,))
-        await self.bot.db.commit()
+        await conn.execute("UPDATE OR IGNORE DiscordConnections SET player = ? WHERE player = ?", (a.id, b.id))
+        await conn.execute("UPDATE Names SET player = ? WHERE player = ?", (a.id, b.id))
+        await conn.execute("DELETE FROM Appearances WHERE player = ?", (b.id,))
         await ctx.send(":+1:")
 
         await self.run_games()
 
     @commands.command()
-    async def hide(self, ctx: commands.Context) -> None:
+    @needs_db
+    async def hide(self, conn: Connection, ctx: commands.Context) -> None:
         """Hide the information the bot tracks about your gameplay."""
-        r = await (await self.bot.db.execute(
-            "INSERT OR REPLACE INTO Hidden (player) SELECT player FROM DiscordConnections WHERE discord_id = ? RETURNING player",
-            (ctx.author.id,),
-        )).fetchone()
+        r = await conn.fetchone("INSERT OR REPLACE INTO Hidden (player) SELECT player FROM DiscordConnections WHERE discord_id = ? RETURNING player", (ctx.author.id,))
         if not r:
             await ctx.send("Sorry, I don't know who you are.")
             return
-        await self.bot.db.commit()
         await ctx.send(":+1:")
 
     @commands.command(aliases=["unhide"])
-    async def show(self, ctx: commands.Context) -> None:
+    @needs_db
+    async def show(self, conn: Connection, ctx: commands.Context) -> None:
         """Revert the effect of `hide`."""
-        r = await (await self.bot.db.execute("SELECT player FROM DiscordConnections WHERE discord_id = ?", (ctx.author.id,))).fetchone()
+        r = await conn.fetchone("SELECT player FROM DiscordConnections WHERE discord_id = ?", (ctx.author.id,))
         if not r:
             await ctx.send("Sorry, I don't know who you are.")
             return
-        await self.bot.db.execute("DELETE FROM Hidden WHERE player = ?", (r[0],))
-        await self.bot.db.commit()
+        await conn.execute("DELETE FROM Hidden WHERE player = ?", (r[0],))
         await ctx.send(":+1:")
 
     @commands.command()
     @commands.is_owner()
-    async def cheated(self, ctx: commands.Context, player: PlayerInfo) -> None:
+    @needs_db
+    async def cheated(self, conn: Connection, ctx: commands.Context, player: PlayerInfo) -> None:
         """Mark a player as having cheated."""
-        await self.bot.db.execute("INSERT OR REPLACE INTO Hidden (player, why) VALUES (?, 'cheated')", (player.id,))
-        await self.bot.db.commit()
+        await conn.execute("INSERT OR REPLACE INTO Hidden (player, why) VALUES (?, 'cheated')", (player.id,))
         await ctx.send(":+1:")
 
     @commands.command()
     @commands.is_owner()
-    async def uncheated(self, ctx: commands.Context, player: PlayerInfo) -> None:
+    @needs_db
+    async def uncheated(self, conn: Connection, ctx: commands.Context, player: PlayerInfo) -> None:
         """Revert the effect of `cheated`."""
-        await self.bot.db.execute("DELETE FROM Hidden WHERE player = ?", (player.id,))
-        await self.bot.db.commit()
+        await conn.execute("DELETE FROM Hidden WHERE player = ?", (player.id,))
         await ctx.send(":+1:")
 
     @commands.command()
     @commands.check_any(commands.has_role("Game host"), commands.is_owner())
-    async def connect(self, ctx: commands.Context, who: discord.Member, *, player: PlayerInfo | str) -> None:
+    @needs_db
+    async def connect(self, conn: Connection, ctx: commands.Context, who: discord.Member, *, player: PlayerInfo | str) -> None:
         """Associate a player with their Discord account."""
         if isinstance(player, PlayerInfo):
             player_id = player.id
@@ -569,24 +578,21 @@ class Stats(commands.Cog):
             if not await view.wait():
                 return
 
-            player_id, = await (await self.bot.db.execute(
-                "INSERT INTO Names VALUES (?, (SELECT COALESCE(MAX(player), 0) + 1 FROM Names)) RETURNING player",
-                (player,),
-            )).fetchone()  # type: ignore
+            player_id, = await conn.fetchone("INSERT INTO Names VALUES (?, (SELECT COALESCE(MAX(player), 0) + 1 FROM Names)) RETURNING player", (player,)) # type: ignore
 
-        await self.bot.db.execute("INSERT OR REPLACE INTO DiscordConnections (discord_id, player) VALUES (?, ?)", (who.id, player_id))
-        await self.bot.db.commit()
+        await conn.execute("INSERT OR REPLACE INTO DiscordConnections (discord_id, player) VALUES (?, ?)", (who.id, player_id))
         await ctx.send(":+1:")
 
     @commands.command()
     @commands.check_any(commands.has_role("Game host"), commands.is_owner())
-    async def unconnected(self, ctx: commands.Context, *, guild: discord.Guild = commands.CurrentGuild) -> None:
+    @needs_db
+    async def unconnected(self, conn: Connection, ctx: commands.Context, *, guild: discord.Guild = commands.CurrentGuild) -> None:
         """List Discord members not associated with a ToS2 username."""
         members = []
         for member in guild.members:
             if member.bot:
                 continue
-            exists = await (await self.bot.db.execute("SELECT 1 FROM DiscordConnections WHERE discord_id = ?", (member.id,))).fetchone()
+            exists = await conn.fetchone("SELECT 1 FROM DiscordConnections WHERE discord_id = ?", (member.id,))
             if not exists:
                 members.append(member)
         await ctx.send("\n".join(f"- {member.mention}" for member in members))

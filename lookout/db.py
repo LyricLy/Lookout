@@ -1,12 +1,12 @@
 import datetime
 import os
 import re
+import sqlite3
 import logging
 import importlib
-from sqlite3 import PARSE_DECLTYPES
 from typing import TypedDict, Callable, Awaitable
 
-import aiosqlite
+import asqlite
 import sqlite_spellfix
 import gamelogs
 import msgpack
@@ -118,14 +118,14 @@ def de_game_result(game: JGameResult) -> gamelogs.GameResult:
 
 VALID_MIGRATION_REGEX = re.compile(r"(v(\d+).*)\.(sql|py)")
 MIGRATION_DIR = "migrations"
-type Migration = Callable[[aiosqlite.Connection], Awaitable[None]]
+type Migration = Callable[[asqlite.Connection], Awaitable[None]]
 
 def get_migration(name: str) -> tuple[int, Migration] | None:
     m = VALID_MIGRATION_REGEX.fullmatch(name)
     if not m:
         return None
     if m[3] == "sql":
-        async def migrate(db: aiosqlite.Connection) -> None:
+        async def migrate(db: asqlite.Connection) -> None:
             with open(f"{MIGRATION_DIR}/{name}") as f:
                 script = f.read()
             await db.executescript(script)
@@ -139,48 +139,40 @@ def get_migrations() -> list[Migration]:
     return [x for _, x in l]
 
 
-async def connect(path: str) -> aiosqlite.Connection:
-    db = await aiosqlite.connect(path, detect_types=PARSE_DECLTYPES, autocommit=False)
-    db.row_factory = aiosqlite.Row
-    await db.enable_load_extension(True)
-    await db.load_extension(sqlite_spellfix.extension_path())  # type: ignore
+def init(db: sqlite3.Connection):
+    db.enable_load_extension(True)
+    db.load_extension(sqlite_spellfix.extension_path())  # type: ignore
+    sqlite3.register_adapter(gamelogs.GameResult, lambda game: msgpack.packb(ser_game_result(game)))
+    sqlite3.register_converter("GAME", lambda data: de_game_result(msgpack.unpackb(data)))
+    sqlite3.register_adapter(gamelogs.Role, lambda role: role.name)
+    sqlite3.register_converter("ROLE", lambda s: gamelogs.by_name(s.decode()))
+    sqlite3.register_adapter(gamelogs.Faction, ser_faction)
+    sqlite3.register_converter("FACTION", lambda s: de_faction(s.decode()))
+    sqlite3.register_adapter(dict, msgpack.packb)
+    sqlite3.register_converter("MSGPACK", msgpack.unpackb)
+    sqlite3.register_adapter(datetime.datetime, datetime.datetime.isoformat)
+    sqlite3.register_converter("DATETIME", lambda s: datetime.datetime.fromisoformat(s.decode()))
 
-    aiosqlite.register_adapter(gamelogs.GameResult, lambda game: msgpack.packb(ser_game_result(game)))
-    aiosqlite.register_converter("GAME", lambda data: de_game_result(msgpack.unpackb(data)))
-    aiosqlite.register_adapter(gamelogs.Role, lambda role: role.name)
-    aiosqlite.register_converter("ROLE", lambda s: gamelogs.by_name(s.decode()))
-    aiosqlite.register_adapter(gamelogs.Faction, ser_faction)
-    aiosqlite.register_converter("FACTION", lambda s: de_faction(s.decode()))
-    aiosqlite.register_adapter(dict, msgpack.packb)
-    aiosqlite.register_converter("MSGPACK", msgpack.unpackb)
-    aiosqlite.register_adapter(datetime.datetime, datetime.datetime.isoformat)
-    aiosqlite.register_converter("DATETIME", lambda s: datetime.datetime.fromisoformat(s.decode()))
+async def create_pool(path: str) -> asqlite.Pool:
+    db = await asqlite.create_pool(path, init=init, detect_types=asqlite.PARSE_DECLTYPES)
 
-    current_version, = await (await db.execute("PRAGMA user_version")).fetchone()  # type: ignore
-    migrations = get_migrations()
-    for n in range(current_version, len(migrations)):
-        log.info("migrating database from version %d to %d", n, n+1)
-        await db.executescript("COMMIT; PRAGMA foreign_keys = OFF; BEGIN")
+    async with db.acquire() as conn:
+        current_version, = await conn.fetchone("PRAGMA user_version")  # type: ignore
+        migrations = get_migrations()
+        for n in range(current_version, len(migrations)):
+            log.info("migrating database from version %d to %d", n, n+1)
+            await conn.executescript("PRAGMA foreign_keys = OFF; BEGIN")
 
-        try:
-            await migrations[n](db)
-        except aiosqlite.Error as e:
-            raise RuntimeError(f"failed to migrate database from version {n} to {n+1}") from e
+            try:
+                await migrations[n](conn)
+            except sqlite3.Error as e:
+                raise RuntimeError(f"failed to migrate database from version {n} to {n+1}") from e
 
-        if r := await (await db.execute("PRAGMA foreign_key_check")).fetchone():
-            raise RuntimeError(f"foreign key violation when migrating database from version {n} to {n+1}: {r[0]} has a dangling reference to {r[2]} (rowid {r[1]}, constraint {r[3]})")
+            if r := await conn.fetchone("PRAGMA foreign_key_check"):
+                raise RuntimeError(f"foreign key violation when migrating database from version {n} to {n+1}: {r[0]} has a dangling reference to {r[2]} (rowid {r[1]}, constraint {r[3]})")
 
-        await db.execute(f"PRAGMA user_version = {n + 1}")
-        await db.commit()
+            await conn.execute(f"PRAGMA user_version = {n + 1}")
+            await conn.commit()
 
-    await db.executescript("""
-        COMMIT;
-        PRAGMA foreign_keys = ON;
-        PRAGMA journal_mode = WAL;
-        PRAGMA busy_timeout = 5000;
-        PRAGMA synchronous = NORMAL;
-        PRAGMA cache_size = -128000;
-        BEGIN DEFERRED
-    """)
     log.info("database connected")
     return db

@@ -1,8 +1,11 @@
+import functools
 import logging
+import inspect
 from collections import defaultdict
-from typing import Any
+from types import CoroutineType
+from typing import Any, Callable, Concatenate, Protocol, Awaitable
 
-import aiosqlite
+import asqlite
 import discord
 from discord.ext import commands
 from jishaku.features import sql
@@ -10,46 +13,9 @@ from jishaku.features import sql
 from . import db
 
 
+__all__ = ["Connection", "needs_db", "Lookout"]
+
 log = logging.getLogger(__name__)
-
-
-@sql.adapter(aiosqlite.Connection)
-class AiosqliteConnectionAdapter(sql.Adapter[aiosqlite.Connection]):
-    connection: aiosqlite.Connection
-
-    def info(self) -> str:
-        return f"aiosqlite {aiosqlite.__version__} Connection"
-
-    async def fetchrow(self, query: str) -> dict[str, Any]:
-        row = await (await self.connector.execute(query)).fetchone()
-        return dict(row) if row else None  # type: ignore
-
-    async def fetch(self, query: str) -> list[dict[str, Any]]:
-        return [dict(row) async for row in await self.connector.execute(query)]
-
-    async def execute(self, query: str) -> str:
-        return str((await self.connector.execute(query)).rowcount)
-
-    async def table_summary(self, table_query: str | None) -> dict[str, dict[str, str]]:
-        tables = defaultdict(dict)
-
-        if table_query:
-            names = [table_query]
-        else:
-            names = [name async for name, in await self.connector.execute("SELECT name FROM sqlite_master WHERE type = 'table'")]
-
-        for name in names:
-            async for row in await self.connector.execute("SELECT name, type, `notnull`, dflt_value, pk FROM pragma_table_info(?)", (name,)):
-                tables[name][row["name"]] = self.format_column_row(row)
-
-        return tables
-
-    def format_column_row(self, row: aiosqlite.Row) -> str:
-        not_null = " NOT NULL"*row["notnull"]
-        default = row["dflt_value"]
-        default_value = f" DEFAULT {default}" if default else ""
-        primary_key = " PRIMARY KEY"*bool(row["pk"])
-        return f"{row['type']}{not_null}{default_value}{primary_key}"
 
 
 extensions = [
@@ -60,6 +26,24 @@ extensions = [
     "..search",
     "..gaming",
 ]
+
+
+type Connection = asqlite.ProxiedConnection
+
+class HasBot(Protocol):
+    bot: Lookout
+
+def needs_db[T: HasBot, **P, R](f: Callable[Concatenate[T, Connection, P], Awaitable[R]]) -> Callable[Concatenate[T, P], CoroutineType[Any, Any, R]]:
+    @functools.wraps(f)
+    async def inner(self: T, *args: P.args, **kwargs: P.kwargs) -> R:
+        async with self.bot.db.acquire() as conn, conn.transaction():
+            return await f(self, conn, *args, **kwargs)
+
+    sig = commands.parameters.Signature.from_callable(f)
+    self, _, *args = sig.parameters.values()
+    inner.__signature__ = sig.replace(parameters=[self, *args])  # type: ignore
+
+    return inner
 
 
 class Lookout(commands.Bot):
@@ -97,7 +81,7 @@ class Lookout(commands.Bot):
             await ctx.send(str(error))
 
     async def setup_hook(self) -> None:
-        self.db = await db.connect("the.db")
+        self.db = await db.create_pool("the.db")
         for extension in extensions:
             await self.load_extension(extension, package=__name__)
 
