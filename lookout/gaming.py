@@ -44,8 +44,7 @@ class ReglePanel(ViewContainer):
 
     @needs_db
     async def finish(self, conn: Connection, guess: gamelogs.Faction, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        logs: Gamelogs = self.bot.get_cog("Gamelogs")  # type: ignore
-        log = await logs.fetch_log(self.game)
+        log = await self.bot.require_cog(Gamelogs).fetch_log(self.game)
 
         self.accent_colour = discord.Colour(0x06e00c if self.game.victor == gamelogs.town else 0xb545ff)
         thumbnail = "town_wins.png" if self.game.victor == gamelogs.town else "coven_wins.png"

@@ -1,10 +1,10 @@
-import uuid
 from dataclasses import dataclass, field, replace
 from typing import Self, Callable, TYPE_CHECKING
 
 import gamelogs
 from discord.ext import commands
 
+from . import db
 from .player_info import PlayerInfo
 
 
@@ -145,7 +145,7 @@ class IdentitySpecifier:
         return bool(self.roles)
 
     def to_sql(self) -> tuple[str, dict]:
-        prefix = f"_{uuid.uuid4().hex}"
+        prefix = db.rand_ident()
         clauses = []
         p = {}
 
@@ -230,7 +230,7 @@ class PlayerSpecifier(IdentitySpecifier):
         )
 
     def to_sql(self) -> tuple[str, dict]:
-        prefix = f"_{uuid.uuid4().hex}"
+        prefix = db.rand_ident()
         s, p = super().to_sql()
         clauses = [s]
 

@@ -306,8 +306,7 @@ class Stats(commands.Cog):
 
     @needs_db
     async def run_game(self, conn: Connection, game: gamelogs.GameResult):
-        logs: Gamelogs = self.bot.get_cog("Gamelogs")  # type: ignore
-        log = await logs.fetch_log(game)
+        log = await self.bot.require_cog(Gamelogs).fetch_log(game)
 
         teams = [[], []]
         ratings = [[], []]
@@ -370,7 +369,7 @@ class Stats(commands.Cog):
             player,
             r["rank"],
             model.rating(r["mu_after"], r["sigma_after"]) if r["mu_after"] else model.rating(),
-            _stats=self,
+            bot=self.bot,
         )
 
     _RATINGS = """(

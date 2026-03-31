@@ -92,10 +92,9 @@ class SearchResults(ViewContainer):
     sep = discord.ui.Separator(spacing=discord.SeparatorSpacing.large)
     underfile = discord.ui.TextDisplay("")
 
-    def __init__(self, logs: Gamelogs, results: list[gamelogs.GameResult]) -> None:
+    def __init__(self, bot: Lookout, results: list[gamelogs.GameResult]) -> None:
         super().__init__()
-        self.logs = logs
-        self.bot = logs.bot
+        self.bot = bot
         self.results = results
         self.page = 0
         self.next.disabled = len(results) == 1
@@ -107,7 +106,7 @@ class SearchResults(ViewContainer):
     @needs_db
     async def draw(self, conn: Connection, *, obscure: bool = False) -> None:
         game = self.results[self.page]
-        log = await self.logs.fetch_log(game)
+        log = await self.bot.require_cog(Gamelogs).fetch_log(game)
 
         self.accent_colour = discord.Colour(0x06e00c if game.victor == gamelogs.town else 0xb545ff if game.victor == gamelogs.coven else 0x06cae0)
 
@@ -216,7 +215,7 @@ class SearchQuery(commands.FlagConverter, case_insensitive=True):
     team: tuple[PlayerInfo, ...] = ()
     count: list[tuple[int, str]] = []
 
-    async def search(self, conn: Connection, stats: Stats) -> list[gamelogs.GameResult]:
+    async def search(self, bot: Lookout, conn: Connection) -> list[gamelogs.GameResult]:
         joins = []
         where = []
         p = {}
@@ -273,7 +272,7 @@ class SearchQuery(commands.FlagConverter, case_insensitive=True):
             p[f"count_{i}"] = count
             p.update(p2)
 
-        games = stats.games(f"{' '.join(joins)} WHERE ({' AND '.join(where) if where else '1'}) GROUP BY gist ORDER BY rowid DESC", p)
+        games = bot.require_cog(Stats).games(f"{' '.join(joins)} WHERE ({' AND '.join(where) if where else '1'}) GROUP BY gist ORDER BY rowid DESC", p)
 
         if self.chat:
             patterns = []
@@ -358,14 +357,11 @@ class Search(commands.Cog):
         count:
         Look for games with a minimum number of a given role or alignment.
         """
-        logs: Gamelogs = self.bot.get_cog("Gamelogs")  # type: ignore
-        stats: Stats = self.bot.get_cog("Stats")  # type: ignore
-
-        results = await query.search(conn, stats)
+        results = await query.search(self.bot, conn)
         if not results:
             await ctx.send("No results.")
             return
-        view = ContainerView(ctx.author, SearchResults(logs, results))
+        view = ContainerView(ctx.author, SearchResults(self.bot, results))
         await view.container.draw()
         view.message = await ctx.send(**view.send_args())
 

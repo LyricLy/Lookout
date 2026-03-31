@@ -1,5 +1,6 @@
 import datetime
 import os
+import uuid
 import re
 import sqlite3
 import logging
@@ -176,3 +177,7 @@ async def create_pool(path: str) -> asqlite.Pool:
 
     log.info("database connected")
     return db
+
+
+def rand_ident() -> str:
+    return f"_{uuid.uuid4().hex}"

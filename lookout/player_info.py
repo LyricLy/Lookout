@@ -9,18 +9,13 @@ from .bot import *
 if TYPE_CHECKING:
     from openskill.models import PlackettLuceRating
 
-    from .stats import Stats
-
 
 @dataclass
 class PlayerInfo:
     id: int
     rank: int
     rating: PlackettLuceRating
-    _stats: Stats = field(repr=False, compare=False, kw_only=True)
-
-    def __post_init__(self) -> None:
-        self.bot = self._stats.bot
+    bot: Lookout = field(repr=False, compare=False, kw_only=True)
 
     def ordinal(self) -> float:
         return self.rating.ordinal(target=1000, alpha=21)
@@ -41,7 +36,8 @@ class PlayerInfo:
 
     @classmethod
     async def convert(cls, ctx: commands.Context, argument: str) -> PlayerInfo:
-        stats: Stats = ctx.bot.get_cog("Stats")
+        from .stats import Stats
+        stats = ctx.bot.require_cog(Stats)
 
         if player := await stats.fetch_player_by_name(argument.replace("\u200b", ""), stats.now()):
             return player
