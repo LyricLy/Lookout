@@ -129,7 +129,7 @@ class SearchResults(ViewContainer):
                 outcome = "Hex bomb in hunt • Coven wins"
                 thumbnail = "hex_bomb_hunt.png"
             case _, _, gamelogs.Outcome.DEATH:
-                outcome = "Town's souls claimed • Coven wins"
+                outcome = "Armageddon • Coven wins"
                 thumbnail = "death_win.png"
 
             case gamelogs.town, True, _:
