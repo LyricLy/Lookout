@@ -12,6 +12,8 @@ import sqlite_spellfix
 import gamelogs
 import msgpack
 
+from .timecode import Timecode
+
 
 log = logging.getLogger(__name__)
 
@@ -153,6 +155,8 @@ def init(db: sqlite3.Connection):
     sqlite3.register_converter("MSGPACK", msgpack.unpackb)
     sqlite3.register_adapter(datetime.datetime, datetime.datetime.isoformat)
     sqlite3.register_converter("DATETIME", lambda s: datetime.datetime.fromisoformat(s.decode()))
+    sqlite3.register_adapter(Timecode, Timecode.to_str)
+    sqlite3.register_converter("TIMECODE", lambda s: Timecode.from_str(s.decode()))
 
 async def create_pool(path: str) -> asqlite.Pool:
     db = await asqlite.create_pool(path, init=init, detect_types=asqlite.PARSE_DECLTYPES)

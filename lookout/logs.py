@@ -13,6 +13,7 @@ from discord.ext import commands
 
 import config
 from .bot import *
+from .timecode import Timecode
 from .views import File
 
 
@@ -42,29 +43,6 @@ def parse_game(text: str, *, pandora: bool = False) -> tuple[gamelogs.GameResult
     except gamelogs.UnsupportedRoleError as e:
         name = e.args[0]
         raise NotAGameError(f'Unknown role "{name}"{" (BToS2 is not supported)"*(name in btos2_roles)}')
-
-
-@dataclass(order=True)
-class Timecode:
-    message_id: int
-    filename_time: datetime.datetime
-
-    def to_datetime(self) -> datetime.datetime:
-        return discord.utils.snowflake_time(self.message_id)
-
-    @classmethod
-    def from_datetime(cls, dt: datetime.datetime) -> Self:
-        return cls(discord.utils.time_snowflake(dt), datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc))
-
-    @classmethod
-    def from_str(cls, s: str) -> Self:
-        return cls(int(s[:16], 16), datetime.datetime.fromisoformat(s[16:]))
-
-    def __iter__(self) -> Iterator[object]:
-        return iter((f"{self.message_id:016x}{self.filename_time.isoformat()}",))
-
-    def __str__(self) -> str:
-        return f"{self.to_datetime()}>{self.filename_time}"
 
 
 @dataclass

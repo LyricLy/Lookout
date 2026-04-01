@@ -329,21 +329,17 @@ class Stats(commands.Cog):
                 """, (
                     info.id, player.starting_ident.role, player.ending_ident.role, player.ending_ident.faction, gist_of(game),
                     player.account_name, player.game_name, player.won, game.saw_hunt(player),
-                    new_rating.mu, new_rating.sigma, *log.first_upload,
+                    new_rating.mu, new_rating.sigma, log.first_upload,
                 ))
 
-        await conn.execute("UPDATE Globals SET (last_update_message_id, last_update_filename_time) = (?, ?)", (log.first_upload.message_id, log.first_upload.filename_time))
+        await conn.execute("UPDATE Globals SET last_update = ?", (log.first_upload,))
 
     async def run_games(self):
         try:
             async with self.catchup:
                 log.info("resolving appearances")
                 c = 0
-                async for game in self.games("""
-                    INNER JOIN Gamelogs ON hash = first_log, Globals
-                    WHERE (message_id, filename_time) > (last_update_message_id, last_update_filename_time)
-                    ORDER BY message_id, filename_time
-                """):
+                async for game in self.games("INNER JOIN Gamelogs ON hash = first_log, Globals WHERE timecode > last_update ORDER BY message_id, filename_time"):
                     await self.run_game(game)
                     c += 1
                 log.info("resolved appearances from %d games", c)
@@ -385,7 +381,7 @@ class Stats(commands.Cog):
 
     @needs_db
     async def fetch_player(self, conn: Connection, player: int, at: Timecode, *, with_rank: bool = True) -> PlayerInfo:
-        r = await (await conn.execute(f"SELECT * FROM {Stats.RATINGS if with_rank else Stats.RATINGS_WO_RANK} WHERE player = ?", (*at, player,))).fetchone()
+        r = await (await conn.execute(f"SELECT * FROM {Stats.RATINGS if with_rank else Stats.RATINGS_WO_RANK} WHERE player = ?", (at, player,))).fetchone()
         return await self._row_to_player_info(player, r)
 
     @needs_db
@@ -400,12 +396,12 @@ class Stats(commands.Cog):
 
     @needs_db
     async def fetch_players(self, conn: Connection, at: Timecode) -> list[PlayerInfo]:
-        rs = await conn.fetchall(f"SELECT * FROM {Stats.RATINGS}", (*at,))
+        rs = await conn.fetchall(f"SELECT * FROM {Stats.RATINGS}", (at,))
         return [await self._row_to_player_info(r["player"], r) for r in rs]
 
     @needs_db
     async def fetch_discord_players(self, conn: Connection, at: Timecode) -> list[PlayerInfo]:
-        rs = await conn.fetchall(f"SELECT * FROM {Stats.RATINGS} WHERE EXISTS(SELECT 1 FROM DiscordConnections WHERE player = Ratings.player) ORDER BY player", (*at,))
+        rs = await conn.fetchall(f"SELECT * FROM {Stats.RATINGS} WHERE EXISTS(SELECT 1 FROM DiscordConnections WHERE player = Ratings.player) ORDER BY player", (at,))
         return [await self._row_to_player_info(r["player"], r) for r in rs]
 
     @commands.command()
@@ -515,10 +511,7 @@ class Stats(commands.Cog):
         # rerun the period we're about to clobber
         tc, = await conn.fetchone("SELECT MIN(timecode) FROM Appearances WHERE player = ?", (b.id,))  # type: ignore
         timecode = Timecode.from_str(tc)
-        await conn.execute(
-            "UPDATE Globals SET (last_update_message_id, last_update_filename_time) = (?, ?)",
-            (timecode.message_id, timecode.filename_time - datetime.timedelta(seconds=1)),
-        )
+        await conn.execute("UPDATE Globals SET last_update = ?", (timecode.pred(),))
 
         await conn.execute("UPDATE OR IGNORE DiscordConnections SET player = ? WHERE player = ?", (a.id, b.id))
         await conn.execute("UPDATE Names SET player = ? WHERE player = ?", (a.id, b.id))
