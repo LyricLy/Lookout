@@ -105,7 +105,6 @@ class Gamelogs(commands.Cog):
 
         return Gamelog(content, filename, url, Timecode(*timecode))
 
-    @needs_db
     async def see_log(self, conn: Connection, digest: str, clean_content: str, *, pandora: bool = False, force: bool = False) -> bool:
         game, message_count = parse_game(clean_content, pandora=pandora)
 
@@ -162,7 +161,7 @@ class Gamelogs(commands.Cog):
                 continue
 
             try:
-                c += await self.see_log(digest, clean_content, pandora="!pandora" in message.content, force="!force" in message.content)
+                c += await self.see_log(conn, digest, clean_content, pandora="!pandora" in message.content, force="!force" in message.content)
             except NotAGameError as e:
                 tears.append((attach, str(e)))
 
