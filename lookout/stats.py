@@ -12,19 +12,17 @@ from typing import AsyncIterator, Literal, Self, Sequence, Any, Protocol
 import discord
 import gamelogs
 from discord.ext import commands
-from openskill.models import PlackettLuce
+from openskill.models import PlackettLuceRating
 
 import config
 from .bot import *
 from .logs import gist_of, Timecode, Gamelogs
-from .player_info import PlayerInfo
+from .player_info import PlayerInfo, PlayerRater, RATINGS, model
 from .specifiers import PURE_BUCKETS, ROLES, IdentitySpecifier
 from .views import ViewContainer, ContainerView, ConfirmationView
 
 
 log = logging.getLogger(__name__)
-
-model = PlackettLuce(limit_sigma=True)
 
 
 @dataclass
@@ -93,20 +91,20 @@ class Winrate:
 
 
 class DisplayablePlayer(Protocol):
-    async def names(self) -> list[str]: ...
-    async def user(self) -> discord.User | None: ...
+    async def names(self, conn: Connection) -> list[str]: ...
+    async def user(self, conn: Connection) -> discord.User | None: ...
 
 @dataclass
 class ReglePlayerInfo:
     _user: discord.User
 
-    async def names(self) -> list[str]:
+    async def names(self, conn: Connection) -> list[str]:
         r = [self._user.name, str(self._user.id)]
         if self._user.global_name:
             r.append(self._user.global_name)
         return r
 
-    async def user(self) -> discord.User | None:
+    async def user(self, conn: Connection) -> discord.User | None:
         return self._user
 
 
@@ -118,17 +116,19 @@ class Jump(discord.ui.Modal):
     def __init__(self, container: TopPaginator) -> None:
         super().__init__(title="Jump to page")
         self.container = container
+        self.bot = container.bot
         self.box.component.default = f"{container.page+1}"  # type: ignore
 
     box = discord.ui.Label(text="Destination", description="A page number or name of a player to jump to.", component=discord.ui.TextInput(max_length=32))
 
-    async def on_submit(self, interaction: discord.Interaction) -> None:
+    @needs_db
+    async def on_submit(self, conn: Connection, interaction: discord.Interaction) -> None:
         t: str = self.box.component.value  # type: ignore
         try:
             page = int(t) - 1
         except ValueError:
             for idx, (player, _) in enumerate(self.container.players):
-                if any([name.casefold() == t.casefold() for name in await player.names()]):
+                if any([name.casefold() == t.casefold() for name in await player.names(conn)]):
                     break
             else:
                 await interaction.response.send_message(f"I don't know a player called '{t}'.", ephemeral=True)
@@ -139,7 +139,7 @@ class Jump(discord.ui.Modal):
                 await interaction.response.send_message(f"Page number {page+1} is out of bounds.", ephemeral=True)
                 return
             self.container.go_to_page(page)
-        await self.container.draw()
+        await self.container.draw(conn)
         await interaction.response.edit_message(view=self.container.view)
 
 
@@ -154,15 +154,15 @@ class TopPaginator(ViewContainer):
         self.played = isinstance(crit, IdentitySpecifier) and crit.won is not None or played
         self.per_page = 15
 
-    async def start(self) -> None:
-        self.players = sorted(await self.decorate_players(), key=lambda p: p[1], reverse=True)
+    async def start(self, conn: Connection) -> None:
+        self.players = sorted(await self.decorate_players(conn), key=lambda p: p[1], reverse=True)
         self.go_to_page(0)
-        await self.draw()
+        await self.draw(conn)
 
-    @needs_db
     async def decorate_players(self, conn: Connection) -> list[tuple[DisplayablePlayer, Key]]:
         if self.crit == "rating":
-            return [(player, player.ordinal()) for player in await self.stats.fetch_players(self.stats.now()) if player.rank is not None]
+            rater = await PlayerRater.new(conn, self.stats.now())
+            return [(player, rating.ordinal()) for player in await self.stats.fetch_players(conn) if (rating := rater.rate(player))]
 
         elif self.crit == "regle":
             rs = await conn.fetchall("SELECT player_id, COALESCE(SUM(guessed = correct), 0), COUNT(*) FROM RegleGames GROUP BY player_id")
@@ -174,10 +174,10 @@ class TopPaginator(ViewContainer):
             if self.crit.won is None:
                 hidden_clause = ""
             rs = await conn.fetchall(f"SELECT player, COUNT(*) FROM Appearances WHERE {hidden_clause}{c} GROUP BY player", p)
-            return [(await self.stats.fetch_player(player, self.stats.now(), with_rank=False), c) for player, c in rs]
+            return [(await self.stats.fetch_player(player), c) for player, c in rs]
         else:
             rs = await conn.fetchall(f"SELECT player, COALESCE(SUM(won), 0), COUNT(*) FROM Appearances WHERE {hidden_clause}{c} GROUP BY player", p)
-            return [(await self.stats.fetch_player(player, self.stats.now(), with_rank=False), Winrate(s, n)) for player, s, n in rs]
+            return [(await self.stats.fetch_player(player), Winrate(s, n)) for player, s, n in rs]
 
     def key_desc(self) -> str:
         if self.crit == "rating":
@@ -234,14 +234,14 @@ class TopPaginator(ViewContainer):
     def has_page(self, num: int) -> bool:
         return 0 <= num*self.per_page < len(self.players)
 
-    async def _render_player(self, player: DisplayablePlayer, key: Key, obscure: bool) -> str:
-        user = await player.user()
-        names = await player.names()
+    async def _render_player(self, conn: Connection, player: DisplayablePlayer, key: Key, obscure: bool) -> str:
+        user = await player.user(conn)
+        names = await player.names(conn)
         return f"{f'{user.mention}' if user else ('\u200b'*obscure).join(names[0])} - {self.show_key(key)}"
 
-    async def draw(self, *, obscure: bool = False) -> None:
+    async def draw(self, conn: Connection, *, obscure: bool = False) -> None:
         start = self.page*self.per_page
-        lb = "\n".join([f"{start+1}. {await self._render_player(player, key, obscure)}" for player, key in self.players[start:start+self.per_page]])
+        lb = "\n".join([f"{start+1}. {await self._render_player(conn, player, key, obscure)}" for player, key in self.players[start:start+self.per_page]])
         self.display.content = f"# Leaderboard\n{self.key_desc()}\n{lb}\n-# Page {self.page+1} of {math.ceil(len(self.players) / self.per_page):,}"
 
     def go_to_page(self, num: int) -> None:
@@ -252,23 +252,26 @@ class TopPaginator(ViewContainer):
     ar = discord.ui.ActionRow()
 
     @ar.button(label="Prev", emoji="⬅️")
-    async def previous(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+    @needs_db
+    async def previous(self, conn: Connection, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         self.go_to_page(self.page - 1)
-        await self.draw()
+        await self.draw(conn)
         await interaction.response.edit_message(view=self.view)
 
     @ar.button(label="Next", emoji="➡️")
-    async def next(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+    @needs_db
+    async def next(self, conn: Connection, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         self.go_to_page(self.page + 1)
-        await self.draw()
+        await self.draw(conn)
         await interaction.response.edit_message(view=self.view)
 
     @ar.button(label="Jump", emoji="↪️")
     async def jump(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await interaction.response.send_modal(Jump(self))
 
-    async def destroy(self) -> None:
-        await self.draw(obscure=True)
+    @needs_db
+    async def destroy(self, conn: Connection) -> None:
+        await self.draw(conn, obscure=True)
         self.remove_item(self.ar)
 
 
@@ -285,9 +288,8 @@ class Stats(commands.Cog):
     async def cog_unload(self) -> None:
         self.catchup_task.cancel()
 
-    @needs_db
     async def update_game(self, conn: Connection, gist: str, from_log: str) -> None:
-        content, = await conn.fetchone("SELECT clean_content FROM Gamelogs WHERE hash = ?", (from_log,))  # type: ignore
+        content, = await conn.fetchone("SELECT clean_content FROM Gamelogs WHERE hash = ?", (from_log,))
         try:
             game, message_count = await asyncio.to_thread(gamelogs.parse, content, gamelogs.ResultAnalyzer() & gamelogs.MessageCountAnalyzer(), clean_tags=False)
         except gamelogs.BadLogError:
@@ -297,24 +299,23 @@ class Stats(commands.Cog):
             await conn.execute("UPDATE Games SET analysis = ?, message_count = ?, analysis_version = ? WHERE gist = ?", (game, message_count, gamelogs.version, gist))
             log.info("updated game from log %s to version %d", from_log, gamelogs.version)
 
-    async def games(self, injection: str = "", params: Sequence[object] | dict[str, Any] = ()) -> AsyncIterator[gamelogs.GameResult]:
-        async with self.bot.db.acquire() as conn:
-            for gist, game, version, from_log in await conn.fetchall(f"SELECT gist, analysis, analysis_version, from_log FROM Games {injection}", params):
-                if version < gamelogs.version:
-                    asyncio.create_task(self.update_game(gist, from_log))
-                yield game
+    async def games(self, conn: Connection, injection: str = "", params: Sequence[object] | dict[str, Any] = ()) -> AsyncIterator[gamelogs.GameResult]:
+        for gist, game, version, from_log in await conn.fetchall(f"SELECT gist, analysis, analysis_version, from_log FROM Games {injection}", params):
+            if version < gamelogs.version:
+                asyncio.create_task(self.update_game(conn, gist, from_log))
+            yield game
 
-    @needs_db
     async def run_game(self, conn: Connection, game: gamelogs.GameResult):
         log = await self.bot.require_cog(Gamelogs).fetch_log(game)
 
-        teams = [[], []]
-        ratings = [[], []]
+        teams: list[list[tuple[gamelogs.Player, PlayerInfo]]] = [[], []]
+        ratings: list[list[PlackettLuceRating]] = [[], []]
         for player in game.players:
-            info: PlayerInfo = await self.fetch_player_by_name(player.account_name, log.first_upload, with_rank=False)  # type: ignore
+            info: PlayerInfo = await self.fetch_player_by_name(conn, player.account_name)  # type: ignore
             i = player.ending_ident.faction == gamelogs.coven
             teams[i].append((player, info))
-            ratings[i].append(info.rating)
+            rating = await info.rating(conn, log.first_upload)
+            ratings[i].append(rating.rating if rating else model.rating())
 
         # pad coven
         avg = sum([r.mu for r in ratings[1]]) / len(ratings[1])
@@ -334,13 +335,14 @@ class Stats(commands.Cog):
 
         await conn.execute("UPDATE Globals SET last_update = ?", (log.first_upload,))
 
-    async def run_games(self):
+    @needs_db
+    async def run_games(self, conn: Connection):
         try:
             async with self.catchup:
                 log.info("resolving appearances")
                 c = 0
-                async for game in self.games("INNER JOIN Gamelogs ON hash = first_log, Globals WHERE timecode > last_update ORDER BY message_id, filename_time"):
-                    await self.run_game(game)
+                async for game in self.games(conn, "INNER JOIN Gamelogs ON hash = first_log, Globals WHERE timecode > last_update ORDER BY message_id, filename_time"):
+                    await self.run_game(conn, game)
                     c += 1
                 log.info("resolved appearances from %d games", c)
         except Exception:
@@ -359,50 +361,18 @@ class Stats(commands.Cog):
     def now(self) -> Timecode:
         return Timecode.from_datetime(self.prev_update())
 
-    async def _row_to_player_info(self, player: int, row: sqlite3.Row | None) -> PlayerInfo:
-        r: sqlite3.Row = row or defaultdict(lambda: None)  # type: ignore
-        return PlayerInfo(
-            player,
-            r["rank"],
-            model.rating(r["mu_after"], r["sigma_after"]) if r["mu_after"] else model.rating(),
-            bot=self.bot,
-        )
+    async def fetch_player(self, player: int) -> PlayerInfo:
+        return PlayerInfo(player, self.bot)
 
-    _RATINGS = """(
-        WITH Ratings AS (SELECT player, mu_after, sigma_after, MAX(timecode) FROM Appearances WHERE timecode < ? GROUP BY player)
-        SELECT player, mu_after, sigma_after, rank
-        FROM Ratings LEFT JOIN {}
-    ) AS Ratings"""
+    async def fetch_player_by_name(self, conn: Connection, name: str) -> PlayerInfo | None:
+        r = await conn.fetchone("SELECT player FROM Names WHERE name = ?", (name,))
+        return PlayerInfo(r[0], self.bot) if r else None
 
-    RATINGS = _RATINGS.format(
-        "(SELECT player, rank() OVER (ORDER BY mu_after - 3.0 * sigma_after DESC) as rank FROM Ratings WHERE NOT EXISTS(SELECT 1 FROM Hidden WHERE player = Ratings.player)) USING (player)"
-    )
-    RATINGS_WO_RANK = _RATINGS.format("(SELECT NULL as rank)")
+    async def fetch_players(self, conn: Connection) -> list[PlayerInfo]:
+        return [PlayerInfo(player, self.bot) for player, in await conn.fetchall(f"SELECT DISTINCT player FROM Names")]
 
-    @needs_db
-    async def fetch_player(self, conn: Connection, player: int, at: Timecode, *, with_rank: bool = True) -> PlayerInfo:
-        r = await (await conn.execute(f"SELECT * FROM {Stats.RATINGS if with_rank else Stats.RATINGS_WO_RANK} WHERE player = ?", (at, player,))).fetchone()
-        return await self._row_to_player_info(player, r)
-
-    @needs_db
-    async def resolve_player_name(self, conn: Connection, name: str) -> int | None:
-        r = await (await conn.execute("SELECT player FROM Names WHERE name = ?", (name,))).fetchone()
-        return r[0] if r else None
-
-    @needs_db
-    async def fetch_player_by_name(self, conn: Connection, name: str, at: Timecode, *, with_rank: bool = True) -> PlayerInfo | None:
-        player = await self.resolve_player_name(name)
-        return await self.fetch_player(player, at, with_rank=with_rank) if player else None
-
-    @needs_db
-    async def fetch_players(self, conn: Connection, at: Timecode) -> list[PlayerInfo]:
-        rs = await conn.fetchall(f"SELECT * FROM {Stats.RATINGS}", (at,))
-        return [await self._row_to_player_info(r["player"], r) for r in rs]
-
-    @needs_db
-    async def fetch_discord_players(self, conn: Connection, at: Timecode) -> list[PlayerInfo]:
-        rs = await conn.fetchall(f"SELECT * FROM {Stats.RATINGS} WHERE EXISTS(SELECT 1 FROM DiscordConnections WHERE player = Ratings.player) ORDER BY player", (at,))
-        return [await self._row_to_player_info(r["player"], r) for r in rs]
+    async def fetch_discord_players(self, conn: Connection) -> list[PlayerInfo]:
+        return [PlayerInfo(player, self.bot) for player, in await conn.fetchall(f"SELECT player FROM DiscordConnections ORDER BY player")]
 
     @commands.command()
     @needs_db
@@ -411,7 +381,7 @@ class Stats(commands.Cog):
         town_maj, coven_maj, town_hunt, coven_hunt = await conn.fetchone("""SELECT
             SUM(victor = 'town' AND NOT hunt_reached), SUM(victor = 'coven' AND NOT hunt_reached),
             SUM(victor = 'town' AND hunt_reached), SUM(victor = 'coven' AND hunt_reached)
-        FROM Games""")  # type: ignore
+        FROM Games""")
         total = town_maj + town_hunt + coven_maj + coven_hunt
 
         next_on = f", next on {discord.utils.format_dt(d)}" if (d := self.next_update()) else ""
@@ -435,7 +405,7 @@ class Stats(commands.Cog):
     @needs_db
     async def winrate_in(self, conn: Connection, player: PlayerInfo, spec: IdentitySpecifier = IdentitySpecifier()) -> Winrate:
         c, p = spec.to_sql()
-        s, n = await conn.fetchone(  # type: ignore
+        s, n = await conn.fetchone(
             f"SELECT COALESCE(SUM(won), 0), COUNT(*) FROM Appearances WHERE player = :player AND {c}",
             {"player": player.id, **p},
         )
@@ -446,8 +416,8 @@ class Stats(commands.Cog):
     async def player(self, conn: Connection, ctx: commands.Context, *, player: PlayerInfo) -> None:
         """Show information about a player."""
         embed = discord.Embed()
-        names = await player.names()
-        user = await player.user()
+        names = await player.names(conn)
+        user = await player.user(conn)
 
         r = None
         for name in names:
@@ -462,13 +432,14 @@ class Stats(commands.Cog):
         game_count = f"{overall.n:,} games" if overall.n != 1 else "1 game"
         embed.set_footer(text=f"Seen in {game_count}")
 
-        hidden = await player.hidden()
+        hidden = await player.hidden(conn)
         if hidden == "user":
             embed.description = f"### {title}\nThis player has chosen to hide their profile."
         elif hidden == "cheated":
             embed.description = f"### {title}\nThis player's profile is hidden because they were found to have played illegitimately."
         else:
-            rated = f"Rated {player.ordinal():.0f} (#{player.rank:,})" if player.rank else "Not rated"
+            rating = await player.rating(conn, self.now())
+            rated = f"Rated {rating.ordinal():.0f} (#{await rating.rank():,})" if rating else "Not rated"
             embed.description = f"### {title}\n{rated}"
             embed.add_field(name="Winrates", value=textwrap.dedent(f"""
                 - Overall {overall}
@@ -487,7 +458,8 @@ class Stats(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(aliases=["lb", "leaderboard", "players"])
-    async def top(self, ctx: commands.Context, played: Literal["played"] | None, *, criterion: Criterion | Literal["overall"] = "rating") -> None:
+    @needs_db
+    async def top(self, conn: Connection, ctx: commands.Context, played: Literal["played"] | None, *, criterion: Criterion | Literal["overall"] = "rating") -> None:
         """Rank all players by a specified criterion.
 
         By default, `top` displays players sorted by their rating. Specifying an alignment or role, such as `town`, will sort by winrate instead.
@@ -496,7 +468,7 @@ class Stats(commands.Cog):
         if criterion == "overall" or played and criterion == "rating":
             criterion = IdentitySpecifier()
         view = ContainerView(ctx.author, TopPaginator(self, criterion, bool(played)))
-        await view.container.start()
+        await view.container.start(conn)
         view.message = await ctx.send(view=view)
 
     @commands.command(name="is")
@@ -509,7 +481,7 @@ class Stats(commands.Cog):
             return
 
         # rerun the period we're about to clobber
-        tc, = await conn.fetchone("SELECT MIN(timecode) FROM Appearances WHERE player = ?", (b.id,))  # type: ignore
+        tc, = await conn.fetchone("SELECT MIN(timecode) FROM Appearances WHERE player = ?", (b.id,))
         timecode = Timecode.from_str(tc)
         await conn.execute("UPDATE Globals SET last_update = ?", (timecode.pred(),))
 
@@ -570,7 +542,7 @@ class Stats(commands.Cog):
             if not await view.wait():
                 return
 
-            player_id, = await conn.fetchone("INSERT INTO Names VALUES (?, (SELECT COALESCE(MAX(player), 0) + 1 FROM Names)) RETURNING player", (player,)) # type: ignore
+            player_id, = await conn.fetchone("INSERT INTO Names VALUES (?, (SELECT COALESCE(MAX(player), 0) + 1 FROM Names)) RETURNING player", (player,))
 
         await conn.execute("INSERT OR REPLACE INTO DiscordConnections (discord_id, player) VALUES (?, ?)", (who.id, player_id))
         await ctx.send(":+1:")

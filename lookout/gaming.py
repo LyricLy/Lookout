@@ -92,7 +92,7 @@ class Gaming(commands.Cog):
     async def regle(self, conn: Connection, ctx: commands.Context) -> None:
         """Guess which faction won a game, given only the lineup."""
         victor = random.choice([gamelogs.town, gamelogs.coven])
-        game, = await self.bot.db.fetchone("SELECT analysis FROM Games WHERE victor = ?1 LIMIT 1 OFFSET ABS(RANDOM()) % (SELECT COUNT(*) FROM Games WHERE victor = ?1)", (victor,))  # type: ignore
+        game, = await conn.fetchone("SELECT analysis FROM Games WHERE victor = ?1 LIMIT 1 OFFSET ABS(RANDOM()) % (SELECT COUNT(*) FROM Games WHERE victor = ?1)", (victor,))
         view = ContainerView(ctx.author, ReglePanel(self.bot, game))
         view.message = await ctx.send(view=view)
 

@@ -272,7 +272,7 @@ class SearchQuery(commands.FlagConverter, case_insensitive=True):
             p[f"count_{i}"] = count
             p.update(p2)
 
-        games = bot.require_cog(Stats).games(f"{' '.join(joins)} WHERE ({' AND '.join(where) if where else '1'}) GROUP BY gist ORDER BY rowid DESC", p)
+        games = bot.require_cog(Stats).games(conn, f"{' '.join(joins)} WHERE ({' AND '.join(where) if where else '1'}) GROUP BY gist ORDER BY rowid DESC", p)
 
         if self.chat:
             patterns = []
@@ -284,7 +284,7 @@ class SearchQuery(commands.FlagConverter, case_insensitive=True):
 
             results = []
             async for game in games:
-                content, = await conn.fetchone("SELECT clean_content FROM Gamelogs INNER JOIN Games ON hash = from_log WHERE gist = ?", (gist_of(game),))  # type: ignore 
+                content, = await conn.fetchone("SELECT clean_content FROM Gamelogs INNER JOIN Games ON hash = from_log WHERE gist = ?", (gist_of(game),))
 
                 for pattern in patterns:
                     for m in re2.finditer(pattern, content, RE_OPTIONS):
@@ -299,7 +299,7 @@ class SearchQuery(commands.FlagConverter, case_insensitive=True):
                         except StopIteration:
                             continue
 
-                        if any([await spec.matches(game, author) for spec in self.author]):
+                        if any([await spec.matches(conn, game, author) for spec in self.author]):
                             break
                     else:
                         break

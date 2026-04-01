@@ -122,7 +122,7 @@ class Gamelogs(commands.Cog):
         try:
             await conn.execute("INSERT INTO Games (gist, from_log, first_log, message_count, analysis, analysis_version, victor, hunt_reached) VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, ?7)", row)
         except sqlite3.IntegrityError:
-            existing_count, = await (await self.bot.db.execute("SELECT message_count FROM Games WHERE gist = ?", (gist,))).fetchone()  # type: ignore
+            existing_count, = await conn.fetchone("SELECT message_count FROM Games WHERE gist = ?", (gist,))
             if force or message_count >= existing_count:
                 await conn.execute("UPDATE Games SET from_log = ?2, message_count = ?3, analysis = ?4, analysis_version = ?5, victor = ?6, hunt_reached = ?7 WHERE gist = ?1", row)
             return False
@@ -170,7 +170,7 @@ class Gamelogs(commands.Cog):
     @commands.Cog.listener()
     @needs_db
     async def on_ready(self, conn: Connection) -> None:
-        start, = await conn.fetchone("SELECT COALESCE(MAX(message_id), 0) FROM Gamelogs")  # type: ignore
+        start, = await conn.fetchone("SELECT COALESCE(MAX(message_id), 0) FROM Gamelogs")
         channel = self.bot.get_partial_messageable(config.gamelog_channel_id)
         log.info("catching up")
         c = 0
