@@ -157,6 +157,10 @@ def init(db: sqlite3.Connection):
     sqlite3.register_converter("DATETIME", lambda s: datetime.datetime.fromisoformat(s.decode()))
     sqlite3.register_adapter(Timecode, Timecode.to_str)
     sqlite3.register_converter("TIMECODE", lambda s: Timecode.from_str(s.decode()))
+    db.executescript("""
+        PRAGMA busy_timeout = 5000;
+        PRAGMA synchronous = NORMAL;
+    """)
 
 async def create_pool(path: str) -> asqlite.Pool:
     db = await asqlite.create_pool(path, init=init, detect_types=asqlite.PARSE_DECLTYPES)
