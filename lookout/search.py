@@ -3,7 +3,6 @@ from __future__ import annotations
 import calendar
 import datetime
 import re
-import io
 from dataclasses import dataclass
 from typing import Literal
 
@@ -40,7 +39,7 @@ class DateRange:
         return discord.utils.time_snowflake(datetime.datetime.combine(self.stop, datetime.time.max, tzinfo=datetime.timezone.utc))
 
     @classmethod
-    async def convert(cls, ctx: commands.Context, argument: str) -> DateRange:
+    async def convert(cls, ctx: Context, argument: str) -> DateRange:
         if season := SEASONS.get(argument.lower()):
             return season
 
@@ -321,7 +320,7 @@ class Search(commands.Cog):
 
     @commands.command()
     @needs_db
-    async def search(self, conn: Connection, ctx: commands.Context, *, query: SearchQuery) -> None:
+    async def search(self, conn: Connection, ctx: Context, *, query: SearchQuery) -> None:
         """Search for games.
 
         A flag-based syntax is used, similar to Discord's built-in search functionality. The following flags are supported:

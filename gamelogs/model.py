@@ -1,6 +1,5 @@
 from dataclasses import dataclass as _dataclass, field as _field
 from enum import Enum as _Enum
-from typing import Literal as _Literal
 
 
 @_dataclass(eq=False)
@@ -234,6 +233,10 @@ class GameResult:
     vip: Player | None = _field(compare=False)
     ended: DayTime
     outcome: Outcome
+
+    def alive_players(self, at: DayTime = (default := DayTime())) -> list[Player]:
+        at = self.ended if at is self.default else at
+        return [player for player in self.players if not player.died or player.died >= at]
 
     def saw_hunt(self, player: Player) -> bool:
         if player not in self.players:

@@ -1,11 +1,11 @@
 from dataclasses import dataclass, field, replace
-from typing import Self, Callable, TYPE_CHECKING
+from typing import Self, Callable
 
 import gamelogs
 from discord.ext import commands
 
 from . import db
-from .bot import Connection
+from .bot import *
 from .player_info import PlayerInfo
 
 
@@ -142,6 +142,30 @@ class IdentitySpecifier:
     hunt: bool | None = None
     only_starting: bool = field(default=False, kw_only=True)
 
+    def desc(self) -> str | None:
+        key_roles = set(self.roles)
+        if self.faction == gamelogs.coven and all([role.default_faction == gamelogs.town for role in self.roles]):
+            specifier = "TT"
+        elif self.faction == gamelogs.town:
+            specifier = "green"
+        else:
+            specifier = None
+
+        for bucket, roles in PURE_BUCKETS.items():
+            if roles == key_roles:
+                match bucket:
+                    case "random town" if specifier:
+                        return specifier
+                    case "random town":
+                        return "Town"
+                    case _ if specifier:
+                        return f"{specifier} {bucket.title()}"
+                    case _:
+                        return bucket.title()
+
+        if self.roles == ROLES:
+            return "any role" if self.faction != gamelogs.coven else "purple"
+
     def __bool__(self) -> bool:
         return bool(self.roles)
 
@@ -185,12 +209,12 @@ class IdentitySpecifier:
             return type(self)([])
         return replace(self, won=won)
 
-    async def finish_parsing(self, ctx: commands.Context, words: list[str]) -> None:
+    async def finish_parsing(self, ctx: Context, words: list[str]) -> None:
         if words:
             raise commands.BadArgument(f"I don't know what '{' '.join(words)}' means.")
 
     @classmethod
-    async def convert(cls, ctx: commands.Context, argument: str) -> Self:
+    async def convert(cls, ctx: Context, argument: str) -> Self:
         us = cls()
 
         words = argument.split()
@@ -247,7 +271,7 @@ class PlayerSpecifier(IdentitySpecifier):
 
         return f"({' AND '.join(clauses)})", p
 
-    async def finish_parsing(self, ctx: commands.Context, words: list[str]) -> None:
+    async def finish_parsing(self, ctx: Context, words: list[str]) -> None:
         for i, word in reversed(list(enumerate(words))):
             if word.startswith("ign:"):
                 self.ign = " ".join([word.removeprefix("ign:"), *words[i+1:]]).strip().replace("\u200b", "")

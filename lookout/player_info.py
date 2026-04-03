@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal, Self
+from typing import Literal, Self
 
 import discord
 from discord.ext import commands
@@ -33,13 +33,12 @@ class PlayerInfo:
         return self.bot.get_user(r[0]) if r else None
 
     @classmethod
-    async def convert(cls, ctx: commands.Context, argument: str) -> PlayerInfo:
+    async def convert(cls, ctx: Context, argument: str) -> PlayerInfo:
         from .stats import Stats
 
-        bot: Lookout = ctx.bot
-        stats = bot.require_cog(Stats)
+        stats = ctx.bot.require_cog(Stats)
 
-        async with bot.db.acquire() as conn:
+        async with ctx.bot.db.acquire() as conn:
             if player := await stats.fetch_player_by_name(conn, argument.replace("\u200b", "")):
                 return player
 
@@ -55,7 +54,7 @@ class PlayerInfo:
             if not r:
                 raise commands.BadArgument(f"I don't know what {member.mention}'s ToS2 account is.")
 
-        return await stats.fetch_player(r[0])
+        return stats.fetch_player(r[0])
 
 
 class PlayerRating:

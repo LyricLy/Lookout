@@ -2,7 +2,7 @@ import re
 import sre_parse as sp
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Self, ClassVar, TYPE_CHECKING, Callable
+from typing import Self, ClassVar, Final
 from lxml.etree import tostring
 from lxml.html import HtmlElement
 from lxml.cssselect import CSSSelector
@@ -71,7 +71,7 @@ def last_n(pattern):
 
 class SystemMessage(Message):
     regex: ClassVar[re.Pattern]
-    leaves: ClassVar[defaultdict[str | None, list[type[Self]]]] = defaultdict(list)
+    leaves: Final[defaultdict[str | None, list[type[Self]]]] = defaultdict(list)
 
     def __init_subclass__(cls):
         SystemMessage.leaves[last_n(cls.regex)].append(cls)

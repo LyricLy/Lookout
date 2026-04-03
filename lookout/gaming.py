@@ -89,7 +89,7 @@ class Gaming(commands.Cog):
 
     @commands.command()
     @needs_db
-    async def regle(self, conn: Connection, ctx: commands.Context) -> None:
+    async def regle(self, conn: Connection, ctx: Context) -> None:
         """Guess which faction won a game, given only the lineup."""
         victor = random.choice([gamelogs.town, gamelogs.coven])
         game, = await conn.fetchone("SELECT analysis FROM Games WHERE victor = ?1 LIMIT 1 OFFSET ABS(RANDOM()) % (SELECT COUNT(*) FROM Games WHERE victor = ?1)", (victor,))

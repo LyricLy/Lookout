@@ -1,19 +1,16 @@
 import functools
 import logging
-import inspect
-from collections import defaultdict
 from types import CoroutineType
 from typing import Any, Callable, Concatenate, Protocol, Awaitable
 
 import asqlite
 import discord
 from discord.ext import commands
-from jishaku.features import sql
 
 from . import db
 
 
-__all__ = ["Connection", "needs_db", "Lookout"]
+__all__ = ["Connection", "needs_db", "Lookout", "Context"]
 
 log = logging.getLogger(__name__)
 
@@ -45,6 +42,8 @@ def needs_db[T: HasBot, **P, R](f: Callable[Concatenate[T, Connection, P], Await
 
     return inner
 
+
+type Context = commands.Context[Lookout]
 
 class Lookout(commands.Bot):
     def __init__(self) -> None:

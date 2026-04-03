@@ -5,7 +5,6 @@ import re
 import sqlite3
 import io
 from dataclasses import dataclass
-from typing import Iterator, Self
 
 import discord
 import gamelogs
@@ -195,7 +194,7 @@ class Gamelogs(commands.Cog):
     @commands.command()
     @commands.is_owner()
     @needs_db
-    async def gamedump(self, conn: Connection, ctx: commands.Context) -> None:
+    async def gamedump(self, conn: Connection, ctx: Context) -> None:
         """Dump logs from the database into a folder."""
         cache = {}
         for filename, content, uploader in await conn.fetchall("SELECT filename, clean_content, uploader FROM Gamelogs"):

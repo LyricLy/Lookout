@@ -1,13 +1,9 @@
 import asyncio
 import datetime
-import functools
 import math
 import logging
 import textwrap
-import sqlite3
-from collections import defaultdict, Counter
-from dataclasses import dataclass, field
-from typing import AsyncIterator, Literal, Self, Sequence, Any, Protocol
+from typing import AsyncIterator, Sequence, Any
 
 import discord
 import gamelogs
@@ -16,100 +12,15 @@ from openskill.models import PlackettLuceRating
 
 import config
 from .bot import *
+from .criteria import Criterion, RatingCriterion, DisplayablePlayer, Key
 from .logs import gist_of, Timecode, Gamelogs
-from .player_info import PlayerInfo, PlayerRater, RATINGS, model
-from .specifiers import PURE_BUCKETS, ROLES, IdentitySpecifier
+from .player_info import PlayerInfo, model
+from .specifiers import IdentitySpecifier
 from .views import ViewContainer, ContainerView, ConfirmationView
+from .winrate import Winrate
 
 
 log = logging.getLogger(__name__)
-
-
-@dataclass
-class Winrate:
-    s: int = 0
-    n: int = 0
-
-    def interval(self) -> tuple[float, float]:
-        z = 3
-        s = self.s
-        n = self.n
-        avg = s / n
-        divisor = 1 + z*z / n
-        return (avg + (z*z/(2*n))) / divisor, z/(2*n) * math.sqrt(4 * n * avg * (1-avg) + z*z) / divisor
-
-    def centre(self) -> float:
-        return self.interval()[0]
-
-    def lower_bound(self) -> float:
-        centre, radius = self.interval()
-        return centre - radius
-
-    def upper_bound(self) -> float:
-        centre, radius = self.interval()
-        return centre + radius
-
-    def _ord_key(self) -> float:
-        try:
-            return self.lower_bound()
-        except ZeroDivisionError:
-            return float("-inf")
-
-    def __str__(self) -> str:
-        try:
-            centre, radius = self.interval()
-        except ZeroDivisionError:
-            return "N/A (no games)"
-        else:
-            return f"{centre*100:.2f}% ± {radius*100:.2f}% ({self.s}/{self.n})"
-
-    def __add__(self, other: Winrate) -> Winrate:
-        return Winrate(self.s + other.s, self.n + other.n)
-
-    def __sub__(self, other: Winrate) -> Winrate:
-        return Winrate(self.s - other.s, self.n - other.n)
-
-    def __lt__(self, other: Winrate) -> bool:
-        if not isinstance(other, Winrate):
-            return NotImplemented
-        return self._ord_key() < other._ord_key()
-
-    def __le__(self, other: Winrate) -> bool:
-        if not isinstance(other, Winrate):
-            return NotImplemented
-        return self._ord_key() <= other._ord_key()
-
-    def __gt__(self, other: Winrate) -> bool:
-        if not isinstance(other, Winrate):
-            return NotImplemented
-        return self._ord_key() > other._ord_key()
-
-    def __ge__(self, other: Winrate) -> bool:
-        if not isinstance(other, Winrate):
-            return NotImplemented
-        return self._ord_key() >= other._ord_key()
-
-
-class DisplayablePlayer(Protocol):
-    async def names(self, conn: Connection) -> list[str]: ...
-    async def user(self, conn: Connection) -> discord.User | None: ...
-
-@dataclass
-class ReglePlayerInfo:
-    _user: discord.User
-
-    async def names(self, conn: Connection) -> list[str]:
-        r = [self._user.name, str(self._user.id)]
-        if self._user.global_name:
-            r.append(self._user.global_name)
-        return r
-
-    async def user(self, conn: Connection) -> discord.User | None:
-        return self._user
-
-
-type Criterion = IdentitySpecifier | Literal["rating", "regle"]
-type Key = Winrate | float
 
 
 class Jump(discord.ui.Modal):
@@ -143,101 +54,32 @@ class Jump(discord.ui.Modal):
         await interaction.response.edit_message(view=self.container.view)
 
 
-class TopPaginator(ViewContainer):
+class TopPaginator[K: Key](ViewContainer):
     display = discord.ui.TextDisplay("")
 
-    def __init__(self, stats: Stats, crit: Criterion, played: bool) -> None:
+    def __init__(self, stats: Stats, crit: Criterion[K]) -> None:
         super().__init__(accent_colour=discord.Colour(0xfce703))
         self.stats = stats
         self.bot = stats.bot
         self.crit: Criterion = crit
-        self.played = isinstance(crit, IdentitySpecifier) and crit.won is not None or played
         self.per_page = 15
 
     async def start(self, conn: Connection) -> None:
-        self.players = sorted(await self.decorate_players(conn), key=lambda p: p[1], reverse=True)
+        self.players = sorted(await self.crit.decorate_players(self.stats, conn), key=lambda p: p[1], reverse=True)
         self.go_to_page(0)
         await self.draw(conn)
 
-    async def decorate_players(self, conn: Connection) -> list[tuple[DisplayablePlayer, Key]]:
-        if self.crit == "rating":
-            rater = await PlayerRater.new(conn, self.stats.now())
-            return [(player, rating.ordinal()) for player in await self.stats.fetch_players(conn) if (rating := rater.rate(player))]
-
-        elif self.crit == "regle":
-            rs = await conn.fetchall("SELECT player_id, COALESCE(SUM(guessed = correct), 0), COUNT(*) FROM RegleGames GROUP BY player_id")
-            return [(ReglePlayerInfo(player), n if self.played else Winrate(s, n)) for player_id, s, n in rs if (player := self.stats.bot.get_user(player_id))]
-
-        c, p = self.crit.to_sql()
-        hidden_clause = "NOT EXISTS(SELECT 1 FROM Hidden WHERE player = Appearances.player) AND "
-        if self.played:
-            if self.crit.won is None:
-                hidden_clause = ""
-            rs = await conn.fetchall(f"SELECT player, COUNT(*) FROM Appearances WHERE {hidden_clause}{c} GROUP BY player", p)
-            return [(await self.stats.fetch_player(player), c) for player, c in rs]
-        else:
-            rs = await conn.fetchall(f"SELECT player, COALESCE(SUM(won), 0), COUNT(*) FROM Appearances WHERE {hidden_clause}{c} GROUP BY player", p)
-            return [(await self.stats.fetch_player(player), Winrate(s, n)) for player, s, n in rs]
-
     def key_desc(self) -> str:
-        if self.crit == "rating":
-            return ""
-        elif self.crit == "regle":
-            return "Sorting by games played of Regle." if self.played else "Sorting by winrate in Regle."
-
-        key_roles = set(self.crit.roles)
-        if self.crit.faction == gamelogs.coven and all([role.default_faction == gamelogs.town for role in self.crit.roles]):
-            specifier = "TT"
-        elif self.crit.faction == gamelogs.town:
-            specifier = "green"
-        else:
-            specifier = None
-
-        for bucket, roles in PURE_BUCKETS.items():
-            if roles == key_roles:
-                match bucket:
-                    case "random town" if specifier:
-                        n = specifier
-                    case "random town":
-                        n = "Town"
-                    case _ if specifier:
-                        n = f"{specifier} {bucket.title()}"
-                    case _:
-                        n = bucket.title()
-                break
-        else:
-            if self.crit.roles == ROLES:
-                n = "any role" if self.crit.faction != gamelogs.coven else "purple"
-            else:
-                return ""
-
-        match self.crit.hunt, "won" if self.crit.won else "lost" if self.crit.won == False else "played" if self.played else None:
-            case None, None:
-                return f"Sorting by winrate as {n}. Confidence intervals are ordered by lower bound, not the centre."
-            case None, p:
-                return f"Sorting by number of games {p} as {n}."
-            case True, None:
-                return f"Sorting by winrate in hunt as {n}. Confidence intervals are ordered by lower bound, not the centre."
-            case True, p:
-                return f"Sorting by number of hunts {p} as {n}."
-
-        assert False
-
-    def show_key(self, key: Key) -> str:
-        if self.crit == "rating":
-            return f"{key:.0f}"
-        elif self.played:
-            return f"{key:,}"
-        else:
-            return f"{key}"
+        desc = self.crit.desc()
+        return "" if desc is None else f"Sorting by {desc}."
 
     def has_page(self, num: int) -> bool:
         return 0 <= num*self.per_page < len(self.players)
 
-    async def _render_player(self, conn: Connection, player: DisplayablePlayer, key: Key, obscure: bool) -> str:
+    async def _render_player(self, conn: Connection, player: DisplayablePlayer, key: K, obscure: bool) -> str:
         user = await player.user(conn)
         names = await player.names(conn)
-        return f"{f'{user.mention}' if user else ('\u200b'*obscure).join(names[0])} - {self.show_key(key)}"
+        return f"{f'{user.mention}' if user else ('\u200b'*obscure).join(names[0])} - {self.crit.show_key(key)}"
 
     async def draw(self, conn: Connection, *, obscure: bool = False) -> None:
         start = self.page*self.per_page
@@ -361,7 +203,7 @@ class Stats(commands.Cog):
     def now(self) -> Timecode:
         return Timecode.from_datetime(self.prev_update())
 
-    async def fetch_player(self, player: int) -> PlayerInfo:
+    def fetch_player(self, player: int) -> PlayerInfo:
         return PlayerInfo(player, self.bot)
 
     async def fetch_player_by_name(self, conn: Connection, name: str) -> PlayerInfo | None:
@@ -376,7 +218,7 @@ class Stats(commands.Cog):
 
     @commands.command()
     @needs_db
-    async def info(self, conn: Connection, ctx: commands.Context) -> None:
+    async def info(self, conn: Connection, ctx: Context) -> None:
         """General information and statistics on stored games."""
         town_maj, coven_maj, town_hunt, coven_hunt = await conn.fetchone("""SELECT
             SUM(victor = 'town' AND NOT hunt_reached), SUM(victor = 'coven' AND NOT hunt_reached),
@@ -413,7 +255,7 @@ class Stats(commands.Cog):
 
     @commands.command()
     @needs_db
-    async def player(self, conn: Connection, ctx: commands.Context, *, player: PlayerInfo) -> None:
+    async def player(self, conn: Connection, ctx: Context, *, player: PlayerInfo) -> None:
         """Show information about a player."""
         embed = discord.Embed()
         names = await player.names(conn)
@@ -459,22 +301,20 @@ class Stats(commands.Cog):
 
     @commands.command(aliases=["lb", "leaderboard", "players"])
     @needs_db
-    async def top(self, conn: Connection, ctx: commands.Context, played: Literal["played"] | None, *, criterion: Criterion | Literal["overall"] = "rating") -> None:
+    async def top(self, conn: Connection, ctx: Context, *, criterion: Criterion = RatingCriterion()) -> None:
         """Rank all players by a specified criterion.
 
         By default, `top` displays players sorted by their rating. Specifying an alignment or role, such as `town`, will sort by winrate instead.
         Prefix with the `played` keyword to count games played instead of winrate.
         """
-        if criterion == "overall" or played and criterion == "rating":
-            criterion = IdentitySpecifier()
-        view = ContainerView(ctx.author, TopPaginator(self, criterion, bool(played)))
+        view = ContainerView(ctx.author, TopPaginator(self, criterion))
         await view.container.start(conn)
         view.message = await ctx.send(view=view)
 
     @commands.command(name="is")
     @commands.is_owner()
     @needs_db
-    async def _is(self, conn: Connection, ctx: commands.Context, a: PlayerInfo, b: PlayerInfo) -> None:
+    async def _is(self, conn: Connection, ctx: Context, a: PlayerInfo, b: PlayerInfo) -> None:
         """Treat 2 players as being the same from now on in statistics."""
         if a.id == b.id:
             await ctx.send("I know.")
@@ -494,7 +334,7 @@ class Stats(commands.Cog):
 
     @commands.command()
     @needs_db
-    async def hide(self, conn: Connection, ctx: commands.Context) -> None:
+    async def hide(self, conn: Connection, ctx: Context) -> None:
         """Hide the information the bot tracks about your gameplay."""
         r = await conn.fetchone("INSERT OR REPLACE INTO Hidden (player) SELECT player FROM DiscordConnections WHERE discord_id = ? RETURNING player", (ctx.author.id,))
         if not r:
@@ -504,7 +344,7 @@ class Stats(commands.Cog):
 
     @commands.command(aliases=["unhide"])
     @needs_db
-    async def show(self, conn: Connection, ctx: commands.Context) -> None:
+    async def show(self, conn: Connection, ctx: Context) -> None:
         """Revert the effect of `hide`."""
         r = await conn.fetchone("SELECT player FROM DiscordConnections WHERE discord_id = ?", (ctx.author.id,))
         if not r:
@@ -516,7 +356,7 @@ class Stats(commands.Cog):
     @commands.command()
     @commands.is_owner()
     @needs_db
-    async def cheated(self, conn: Connection, ctx: commands.Context, player: PlayerInfo) -> None:
+    async def cheated(self, conn: Connection, ctx: Context, player: PlayerInfo) -> None:
         """Mark a player as having cheated."""
         await conn.execute("INSERT OR REPLACE INTO Hidden (player, why) VALUES (?, 'cheated')", (player.id,))
         await ctx.send(":+1:")
@@ -524,7 +364,7 @@ class Stats(commands.Cog):
     @commands.command()
     @commands.is_owner()
     @needs_db
-    async def uncheated(self, conn: Connection, ctx: commands.Context, player: PlayerInfo) -> None:
+    async def uncheated(self, conn: Connection, ctx: Context, player: PlayerInfo) -> None:
         """Revert the effect of `cheated`."""
         await conn.execute("DELETE FROM Hidden WHERE player = ?", (player.id,))
         await ctx.send(":+1:")
@@ -532,7 +372,7 @@ class Stats(commands.Cog):
     @commands.command()
     @commands.check_any(commands.has_role("Game host"), commands.is_owner())
     @needs_db
-    async def connect(self, conn: Connection, ctx: commands.Context, who: discord.Member, *, player: PlayerInfo | str) -> None:
+    async def connect(self, conn: Connection, ctx: Context, who: discord.Member, *, player: PlayerInfo | str) -> None:
         """Associate a player with their Discord account."""
         if isinstance(player, PlayerInfo):
             player_id = player.id
@@ -550,7 +390,7 @@ class Stats(commands.Cog):
     @commands.command()
     @commands.check_any(commands.has_role("Game host"), commands.is_owner())
     @needs_db
-    async def unconnected(self, conn: Connection, ctx: commands.Context, *, guild: discord.Guild = commands.CurrentGuild) -> None:
+    async def unconnected(self, conn: Connection, ctx: Context, *, guild: discord.Guild = commands.CurrentGuild) -> None:
         """List Discord members not associated with a ToS2 username."""
         members = []
         for member in guild.members:

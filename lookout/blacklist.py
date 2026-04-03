@@ -112,7 +112,7 @@ class Blacklist(commands.Cog):
     @commands.command()
     @commands.is_owner()
     @needs_db
-    async def bldump(self, conn: Connection, ctx: commands.Context, target: discord.ForumChannel) -> None:
+    async def bldump(self, conn: Connection, ctx: Context, target: discord.ForumChannel) -> None:
         """Write the blacklist to a target forum channel."""
         if target.id == config.channel_id:
             await ctx.send("It's not a good idea to dump into the current blacklist channel.")

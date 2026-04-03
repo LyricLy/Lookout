@@ -1,4 +1,4 @@
-from typing import Iterator, Any, Generator
+from typing import Iterator
 from lxml import html
 from lxml.etree import ParserError
 
