@@ -4,7 +4,7 @@ import discord
 from discord.ext import commands
 
 from .bot import *
-from .player_info import PlayerRater, HIDDEN_CLAUSE
+from .player_info import PlayerRater
 from .specifiers import IdentitySpecifier
 from .winrate import Winrate
 
@@ -82,6 +82,9 @@ class RatingCriterion(Criterion[float]):
         if argument.lower() != "rating":
             raise commands.BadArgument()
         return cls()
+
+
+HIDDEN_CLAUSE = "NOT EXISTS(SELECT 1 FROM Hidden WHERE player = Appearances.player) AND "
 
 
 class WinrateCriterion(Criterion[Winrate]):
