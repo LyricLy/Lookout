@@ -71,6 +71,8 @@ class PlayerRating:
         return rank
 
 
+HIDDEN_CLAUSE = "NOT EXISTS(SELECT 1 FROM Hidden WHERE player = Appearances.player) AND "
+
 class PlayerRater:
     def __init__(self, ratings: dict[int, PlackettLuceRating], conn: Connection, at: Timecode) -> None:
         self.ratings = ratings
@@ -80,7 +82,7 @@ class PlayerRater:
     @classmethod
     async def new(cls, conn: Connection, at: Timecode) -> Self:
         d: dict[int, PlackettLuceRating] = {}
-        for player, mu, sigma in await conn.fetchall(f"SELECT player, mu, sigma FROM {RATINGS}", (at,)):
+        for player, mu, sigma in await conn.fetchall(f"SELECT player, mu, sigma FROM {RATINGS} WHERE {HIDDEN_CLAUSE}1", (at,)):
             d[player] = model.rating(mu, sigma)
         return cls(d, conn, at)
 
