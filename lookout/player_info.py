@@ -22,7 +22,7 @@ class PlayerInfo:
             r = await conn.fetchone(f"SELECT mu, sigma, Games.generation = Globals.generation FROM {RATINGS} INNER JOIN Games ON gist = game, Globals WHERE player = ?", (at, self.id))
         else:
             r = await conn.fetchone(f"SELECT mu, sigma, 1 FROM {RATINGS} WHERE player = ?", (at, self.id))
-        assert r[-1], "rating came from previous generation"
+        assert r is None or r[-1], "rating came from previous generation"
         return PlayerRating(model.rating(r["mu"], r["sigma"]), conn, at) if r else None
 
     async def names(self, conn: Connection) -> list[str]:
