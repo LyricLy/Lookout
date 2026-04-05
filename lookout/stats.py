@@ -32,7 +32,7 @@ class Jump(discord.ui.Modal):
 
     box = discord.ui.Label(text="Destination", description="A page number or name of a player to jump to.", component=discord.ui.TextInput(max_length=32))
 
-    @needs_db
+    @needs_db()
     async def on_submit(self, conn: Connection, interaction: discord.Interaction) -> None:
         t: str = self.box.component.value  # type: ignore
         try:
@@ -94,14 +94,14 @@ class TopPaginator[K: Key](ViewContainer):
     ar = discord.ui.ActionRow()
 
     @ar.button(label="Prev", emoji="⬅️")
-    @needs_db
+    @needs_db()
     async def previous(self, conn: Connection, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         self.go_to_page(self.page - 1)
         await self.draw(conn)
         await interaction.response.edit_message(view=self.view)
 
     @ar.button(label="Next", emoji="➡️")
-    @needs_db
+    @needs_db()
     async def next(self, conn: Connection, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         self.go_to_page(self.page + 1)
         await self.draw(conn)
@@ -111,7 +111,7 @@ class TopPaginator[K: Key](ViewContainer):
     async def jump(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await interaction.response.send_modal(Jump(self))
 
-    @needs_db
+    @needs_db()
     async def destroy(self, conn: Connection) -> None:
         await self.draw(conn, obscure=True)
         self.remove_item(self.ar)
@@ -147,8 +147,12 @@ class Stats(commands.Cog):
                 asyncio.create_task(self.update_game(conn, gist, from_log))
             yield game
 
+    @transaction
     async def run_game(self, conn: Connection, game: gamelogs.GameResult):
-        log = await self.bot.require_cog(Gamelogs).fetch_log(game)
+        log = await self.bot.require_cog(Gamelogs).fetch_log(conn, game)
+        gist = gist_of(game)
+
+        await conn.execute("DELETE FROM Appearances WHERE game = ?", (gist,))
 
         teams: list[list[tuple[gamelogs.Player, PlayerInfo]]] = [[], []]
         ratings: list[list[PlackettLuceRating]] = [[], []]
@@ -156,7 +160,7 @@ class Stats(commands.Cog):
             info: PlayerInfo = await self.fetch_player_by_name(conn, player.account_name)  # type: ignore
             i = player.ending_ident.faction == gamelogs.coven
             teams[i].append((player, info))
-            rating = await info.rating(conn, log.first_upload)
+            rating = await info.rating(conn, log.first_upload, this_gen=True)
             ratings[i].append(rating.rating if rating else model.rating())
 
         # pad coven
@@ -167,23 +171,23 @@ class Stats(commands.Cog):
         for team, team_ratings in zip(teams, new_ratings):
             for (player, info), new_rating in zip(team, team_ratings):
                 await conn.execute("""
-                    INSERT OR REPLACE INTO Appearances (player, starting_role, ending_role, faction, game, account_name, game_name, won, saw_hunt, mu_after, sigma_after, timecode)
+                    INSERT INTO Appearances (player, starting_role, ending_role, faction, game, account_name, game_name, won, saw_hunt, mu_after, sigma_after, timecode)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
-                    info.id, player.starting_ident.role, player.ending_ident.role, player.ending_ident.faction, gist_of(game),
+                    info.id, player.starting_ident.role, player.ending_ident.role, player.ending_ident.faction, gist,
                     player.account_name, player.game_name, player.won, game.saw_hunt(player),
                     new_rating.mu, new_rating.sigma, log.first_upload,
                 ))
 
-        await conn.execute("UPDATE Globals SET last_update = ?", (log.first_upload,))
+        await conn.execute("UPDATE Games SET generation = Globals.generation FROM Globals WHERE gist = ?", (gist,))
 
-    @needs_db
+    @needs_db(transact=False)
     async def run_games(self, conn: Connection):
         try:
             async with self.catchup:
                 log.info("resolving appearances")
                 c = 0
-                async for game in self.games(conn, "INNER JOIN Gamelogs ON hash = first_log, Globals WHERE timecode > last_update ORDER BY message_id, filename_time"):
+                async for game in self.games(conn, "INNER JOIN Gamelogs ON hash = first_log, Globals WHERE Games.generation < Globals.generation ORDER BY timecode"):
                     await self.run_game(conn, game)
                     c += 1
                 log.info("resolved appearances from %d games", c)
@@ -217,7 +221,7 @@ class Stats(commands.Cog):
         return [PlayerInfo(player, self.bot) for player, in await conn.fetchall(f"SELECT player FROM DiscordConnections ORDER BY player")]
 
     @commands.command()
-    @needs_db
+    @needs_db()
     async def info(self, conn: Connection, ctx: Context) -> None:
         """General information and statistics on stored games."""
         town_maj, coven_maj, town_hunt, coven_hunt = await conn.fetchone("""SELECT
@@ -244,7 +248,7 @@ class Stats(commands.Cog):
 
         await ctx.send(embed=embed)
 
-    @needs_db
+    @needs_db()
     async def winrate_in(self, conn: Connection, player: PlayerInfo, spec: IdentitySpecifier = IdentitySpecifier()) -> Winrate:
         c, p = spec.to_sql()
         s, n = await conn.fetchone(
@@ -254,7 +258,7 @@ class Stats(commands.Cog):
         return Winrate(s, n)
 
     @commands.command()
-    @needs_db
+    @needs_db()
     async def player(self, conn: Connection, ctx: Context, *, player: PlayerInfo) -> None:
         """Show information about a player."""
         embed = discord.Embed()
@@ -300,7 +304,7 @@ class Stats(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(aliases=["lb", "leaderboard", "players"])
-    @needs_db
+    @needs_db()
     async def top(self, conn: Connection, ctx: Context, *, criterion: Criterion = RatingCriterion()) -> None:
         """Rank all players by a specified criterion.
 
@@ -313,17 +317,24 @@ class Stats(commands.Cog):
 
     @commands.command(name="is")
     @commands.is_owner()
-    @needs_db
-    async def _is(self, conn: Connection, ctx: Context, a: PlayerInfo, b: PlayerInfo) -> None:
+    @needs_db()
+    async def is_(self, conn: Connection, ctx: Context, a: PlayerInfo, b: PlayerInfo) -> None:
         """Treat 2 players as being the same from now on in statistics."""
         if a.id == b.id:
             await ctx.send("I know.")
             return
 
-        # rerun the period we're about to clobber
-        tc, = await conn.fetchone("SELECT MIN(timecode) FROM Appearances WHERE player = ?", (b.id,))
-        timecode = Timecode.from_str(tc)
-        await conn.execute("UPDATE Globals SET last_update = ?", (timecode.pred(),))
+        conflicts = await conn.fetchall("SELECT game FROM Appearances AS A1 INNER JOIN Appearances AS A2 USING (game) WHERE A1.player = ? AND A2.player = ?", (a.id, b.id))
+        if conflicts:
+            logs = self.bot.require_cog(Gamelogs)
+            urls = [f"- {u}" for conflict, in conflicts if (u := await (await logs.fetch_log_with_gist(conn, conflict)).url())] if len(conflicts) <= 10 else []
+            await ctx.send(f"Refusing to merge players who have appeared together in {len(conflicts)} games.\n{'\n'.join(urls)}")
+            return
+
+        timecode, = await conn.fetchone("SELECT MIN(timecode) FROM Appearances WHERE player = ?", (b.id,))
+        if timecode:
+            await conn.execute("UPDATE Globals SET generation = generation + 1")
+            await conn.execute("UPDATE Games SET generation = generation + 1 FROM Gamelogs WHERE first_log = hash AND timecode < ?", (timecode,))
 
         await conn.execute("UPDATE OR IGNORE DiscordConnections SET player = ? WHERE player = ?", (a.id, b.id))
         await conn.execute("UPDATE Names SET player = ? WHERE player = ?", (a.id, b.id))
@@ -333,7 +344,7 @@ class Stats(commands.Cog):
         await self.run_games()
 
     @commands.command()
-    @needs_db
+    @needs_db()
     async def hide(self, conn: Connection, ctx: Context) -> None:
         """Hide the information the bot tracks about your gameplay."""
         r = await conn.fetchone("INSERT OR REPLACE INTO Hidden (player) SELECT player FROM DiscordConnections WHERE discord_id = ? RETURNING player", (ctx.author.id,))
@@ -343,7 +354,7 @@ class Stats(commands.Cog):
         await ctx.send(":+1:")
 
     @commands.command(aliases=["unhide"])
-    @needs_db
+    @needs_db()
     async def show(self, conn: Connection, ctx: Context) -> None:
         """Revert the effect of `hide`."""
         r = await conn.fetchone("SELECT player FROM DiscordConnections WHERE discord_id = ?", (ctx.author.id,))
@@ -355,7 +366,7 @@ class Stats(commands.Cog):
 
     @commands.command()
     @commands.is_owner()
-    @needs_db
+    @needs_db()
     async def cheated(self, conn: Connection, ctx: Context, player: PlayerInfo) -> None:
         """Mark a player as having cheated."""
         await conn.execute("INSERT OR REPLACE INTO Hidden (player, why) VALUES (?, 'cheated')", (player.id,))
@@ -363,7 +374,7 @@ class Stats(commands.Cog):
 
     @commands.command()
     @commands.is_owner()
-    @needs_db
+    @needs_db()
     async def uncheated(self, conn: Connection, ctx: Context, player: PlayerInfo) -> None:
         """Revert the effect of `cheated`."""
         await conn.execute("DELETE FROM Hidden WHERE player = ?", (player.id,))
@@ -371,7 +382,7 @@ class Stats(commands.Cog):
 
     @commands.command()
     @commands.check_any(commands.has_role("Game host"), commands.is_owner())
-    @needs_db
+    @needs_db()
     async def connect(self, conn: Connection, ctx: Context, who: discord.Member, *, player: PlayerInfo | str) -> None:
         """Associate a player with their Discord account."""
         if isinstance(player, PlayerInfo):
@@ -389,7 +400,7 @@ class Stats(commands.Cog):
 
     @commands.command()
     @commands.check_any(commands.has_role("Game host"), commands.is_owner())
-    @needs_db
+    @needs_db()
     async def unconnected(self, conn: Connection, ctx: Context, *, guild: discord.Guild = commands.CurrentGuild) -> None:
         """List Discord members not associated with a ToS2 username."""
         members = []

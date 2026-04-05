@@ -102,10 +102,10 @@ class SearchResults(ViewContainer):
     def has_page(self, num: int) -> bool:
         return 0 <= num < len(self.results)
 
-    @needs_db
+    @needs_db()
     async def draw(self, conn: Connection, *, obscure: bool = False) -> None:
         game = self.results[self.page]
-        log = await self.bot.require_cog(Gamelogs).fetch_log(game)
+        log = await self.bot.require_cog(Gamelogs).fetch_log(conn, game)
 
         self.accent_colour = discord.Colour(0x06e00c if game.victor == gamelogs.town else 0xb545ff if game.victor == gamelogs.coven else 0x06cae0)
 
@@ -319,7 +319,7 @@ class Search(commands.Cog):
         self.bot = bot
 
     @commands.command()
-    @needs_db
+    @needs_db()
     async def search(self, conn: Connection, ctx: Context, *, query: SearchQuery) -> None:
         """Search for games.
 

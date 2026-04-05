@@ -1,3 +1,4 @@
+import contextlib
 import functools
 import logging
 from types import CoroutineType
@@ -10,7 +11,7 @@ from discord.ext import commands
 from . import db
 
 
-__all__ = ["Connection", "needs_db", "Lookout", "Context"]
+__all__ = ["Connection", "needs_db", "transaction", "Lookout", "Context"]
 
 log = logging.getLogger(__name__)
 
@@ -30,15 +31,26 @@ type Connection = asqlite.ProxiedConnection
 class HasBot(Protocol):
     bot: Lookout
 
-def needs_db[T: HasBot, **P, R](f: Callable[Concatenate[T, Connection, P], Awaitable[R]]) -> Callable[Concatenate[T, P], CoroutineType[Any, Any, R]]:
-    @functools.wraps(f)
-    async def inner(self: T, *args: P.args, **kwargs: P.kwargs) -> R:
-        async with self.bot.db.acquire() as conn, conn.transaction():
-            return await f(self, conn, *args, **kwargs)
+def needs_db(*, transact: bool = True):
+    def needs_db_deco[T: HasBot, **P, R](f: Callable[Concatenate[T, Connection, P], Awaitable[R]]) -> Callable[Concatenate[T, P], CoroutineType[Any, Any, R]]:
+        @functools.wraps(f)
+        async def inner(self: T, *args: P.args, **kwargs: P.kwargs) -> R:
+            async with self.bot.db.acquire() as conn, conn.transaction() if transact else contextlib.nullcontext():
+                return await f(self, conn, *args, **kwargs)
 
-    sig = commands.parameters.Signature.from_callable(f)
-    self, _, *args = sig.parameters.values()
-    inner.__signature__ = sig.replace(parameters=[self, *args])  # type: ignore
+        sig = commands.parameters.Signature.from_callable(f)
+        self, _, *args = sig.parameters.values()
+        inner.__signature__ = sig.replace(parameters=[self, *args])  # type: ignore
+
+        return inner
+
+    return needs_db_deco
+
+def transaction[T, **P, R](f: Callable[Concatenate[T, Connection, P], Awaitable[R]]) -> Callable[Concatenate[T, Connection, P], CoroutineType[Any, Any, R]]:
+    @functools.wraps(f)
+    async def inner(self: T, conn: Connection, *args: P.args, **kwargs: P.kwargs) -> R:
+        async with conn.transaction():
+            return await f(self, conn, *args, **kwargs)
 
     return inner
 

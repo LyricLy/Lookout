@@ -10,15 +10,19 @@ from .logs import Timecode
 
 
 model = PlackettLuce(limit_sigma=True)
-RATINGS = "(SELECT player, mu_after AS mu, sigma_after AS sigma, MAX(timecode) FROM Appearances WHERE timecode < ? GROUP BY player) AS Ratings"
+RATINGS = "(SELECT player, game, mu_after AS mu, sigma_after AS sigma, MAX(timecode) FROM Appearances WHERE timecode < ? GROUP BY player) AS Ratings"
 
 @dataclass
 class PlayerInfo:
     id: int
     bot: Lookout = field(repr=False, compare=False)
 
-    async def rating(self, conn: Connection, at: Timecode) -> PlayerRating | None:
-        r = await conn.fetchone(f"SELECT mu, sigma FROM {RATINGS} WHERE player = ?", (at, self.id))
+    async def rating(self, conn: Connection, at: Timecode, *, this_gen: bool = False) -> PlayerRating | None:
+        if this_gen:
+            r = await conn.fetchone(f"SELECT mu, sigma, Games.generation = Globals.generation FROM {RATINGS} INNER JOIN Games ON gist = game, Globals WHERE player = ?", (at, self.id))
+        else:
+            r = await conn.fetchone(f"SELECT mu, sigma, 1 FROM {RATINGS} WHERE player = ?", (at, self.id))
+        assert r[-1], "rating came from previous generation"
         return PlayerRating(model.rating(r["mu"], r["sigma"]), conn, at) if r else None
 
     async def names(self, conn: Connection) -> list[str]:

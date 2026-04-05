@@ -92,8 +92,7 @@ class Gamelogs(commands.Cog):
     def __init__(self, bot: Lookout) -> None:
         self.bot = bot
 
-    @needs_db
-    async def fetch_log(self, conn: Connection, game: gamelogs.GameResult) -> Gamelog:
+    async def fetch_log_with_gist(self, conn: Connection, gist: str) -> Gamelog:
         r = await conn.fetchone("""
             SELECT
                 Best.channel_id, Best.message_id, Best.attachment_id, Best.filename, Best.clean_content,
@@ -102,12 +101,15 @@ class Gamelogs(commands.Cog):
             INNER JOIN Gamelogs AS Best ON Best.hash = from_log
             INNER JOIN Gamelogs AS First ON First.hash = first_log
             WHERE gist = ?
-        """, (gist_of(game),))
+        """, (gist,))
         if r is None:
             raise ValueError("game not found")
 
         channel_id, message_id, attachment_id, filename, content, *timecode = r
         return Gamelog(content, filename, channel_id, message_id, attachment_id, Timecode(*timecode), self.bot)
+
+    async def fetch_log(self, conn: Connection, game: gamelogs.GameResult) -> Gamelog:
+        return await self.fetch_log_with_gist(conn, gist_of(game))
 
     async def see_log(self, conn: Connection, digest: str, clean_content: str, *, pandora: bool = False, force: bool = False) -> bool:
         game, message_count = parse_game(clean_content, pandora=pandora)
@@ -135,7 +137,7 @@ class Gamelogs(commands.Cog):
         finally:
             await conn.execute("UPDATE Gamelogs SET game = ? WHERE hash = ?", (gist, digest))
 
-    @needs_db
+    @needs_db()
     async def see_message(self, conn: Connection, message: discord.Message, *, cry: bool = False) -> tuple[int, list[str]]:
         c = 0
         tears = []
@@ -172,7 +174,7 @@ class Gamelogs(commands.Cog):
         return c, tears
 
     @commands.Cog.listener()
-    @needs_db
+    @needs_db()
     async def on_ready(self, conn: Connection) -> None:
         start, = await conn.fetchone("SELECT COALESCE(MAX(message_id), 0) FROM Gamelogs")
         channel = self.bot.get_partial_messageable(config.gamelog_channel_id)
@@ -198,7 +200,7 @@ class Gamelogs(commands.Cog):
 
     @commands.command()
     @commands.is_owner()
-    @needs_db
+    @needs_db()
     async def gamedump(self, conn: Connection, ctx: Context) -> None:
         """Dump logs from the database into a folder."""
         cache = {}
