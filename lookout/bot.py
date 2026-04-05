@@ -1,4 +1,3 @@
-import contextlib
 import functools
 import logging
 from types import CoroutineType
@@ -33,9 +32,12 @@ class HasBot(Protocol):
 
 def needs_db(*, transact: bool = True):
     def needs_db_deco[T: HasBot, **P, R](f: Callable[Concatenate[T, Connection, P], Awaitable[R]]) -> Callable[Concatenate[T, P], CoroutineType[Any, Any, R]]:
+        if transact:
+            f = transaction(f)
+
         @functools.wraps(f)
         async def inner(self: T, *args: P.args, **kwargs: P.kwargs) -> R:
-            async with self.bot.db.acquire() as conn, conn.transaction() if transact else contextlib.nullcontext():
+            async with self.bot.db.acquire() as conn, conn.transaction():
                 return await f(self, conn, *args, **kwargs)
 
         sig = commands.parameters.Signature.from_callable(f)
@@ -49,8 +51,12 @@ def needs_db(*, transact: bool = True):
 def transaction[T, **P, R](f: Callable[Concatenate[T, Connection, P], Awaitable[R]]) -> Callable[Concatenate[T, Connection, P], CoroutineType[Any, Any, R]]:
     @functools.wraps(f)
     async def inner(self: T, conn: Connection, *args: P.args, **kwargs: P.kwargs) -> R:
+        log.info("%s starting transaction", f)
         async with conn.transaction():
-            return await f(self, conn, *args, **kwargs)
+            try:
+                return await f(self, conn, *args, **kwargs)
+            finally:
+                log.info("%s ending transaction", f)
 
     return inner
 
