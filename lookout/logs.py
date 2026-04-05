@@ -137,7 +137,7 @@ class Gamelogs(commands.Cog):
         finally:
             await conn.execute("UPDATE Gamelogs SET game = ? WHERE hash = ?", (gist, digest))
 
-    @needs_db()
+    @transaction
     async def see_message(self, conn: Connection, message: discord.Message, *, cry: bool = False) -> tuple[int, list[str]]:
         c = 0
         tears = []
@@ -174,24 +174,25 @@ class Gamelogs(commands.Cog):
         return c, tears
 
     @commands.Cog.listener()
-    @needs_db()
+    @needs_db(transact=False)
     async def on_ready(self, conn: Connection) -> None:
         start, = await conn.fetchone("SELECT COALESCE(MAX(message_id), 0) FROM Gamelogs")
         channel = self.bot.get_partial_messageable(config.gamelog_channel_id)
         log.info("catching up")
         c = 0
         async for message in channel.history(limit=None, after=discord.Object(id=start)):
-            added, _ = await self.see_message(message)
+            added, _ = await self.see_message(conn, message)
             c += added
         if c:
             self.bot.dispatch("saw_games")
         log.info("caught up on %d games", c)
 
     @commands.Cog.listener()
-    async def on_message(self, message: discord.Message) -> None:
+    @needs_db(transact=False)
+    async def on_message(self, conn: Connection, message: discord.Message) -> None:
         if message.channel.id != config.gamelog_channel_id:
             return
-        added, tears = await self.see_message(message)
+        added, tears = await self.see_message(conn, message)
         log.info("added %d games from %d (issues: %r)", added, message.id, tears)
         if added:
             self.bot.dispatch("saw_games")
