@@ -56,7 +56,7 @@ class ReglePanel(ViewContainer):
         self.end(f"{header}\nUploaded {log.format_upload_time()}")
 
         # disgusting
-        self.add_item(log.to_item())
+        self.add_item(await log.to_item())
         self._children.insert(self._children.index(self.sep), self._children.pop())
 
         await conn.execute("INSERT INTO RegleGames (player_id, guessed, correct, gist) VALUES (?, ?, ?, ?)", (interaction.user.id, repr(guess), repr(self.game.victor), gist_of(self.game)))

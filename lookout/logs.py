@@ -4,7 +4,7 @@ import logging
 import re
 import sqlite3
 import io
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import discord
 import gamelogs
@@ -43,22 +43,47 @@ def parse_game(text: str, *, pandora: bool = False) -> tuple[gamelogs.GameResult
         name = e.args[0]
         raise NotAGameError(f'Unknown role "{name}"{" (BToS2 is not supported)"*(name in btos2_roles)}')
 
+async def message_exists(bot: Lookout, channel_id: int, message_id: int) -> bool:
+    if (a := config.message_exists(channel_id, message_id)) is not None:
+        return a
+
+    channel = bot.get_channel(channel_id)
+    if not isinstance(channel, discord.TextChannel):
+        return False
+
+    try:
+        await channel.fetch_message(message_id)
+    except discord.NotFound:
+        return False
+
+    return True
+
 
 @dataclass
 class Gamelog:
     content: str
     filename: str
-    url: str | None
+    channel_id: int
+    message_id: int
+    attachment_id: int
     first_upload: Timecode
+    bot: Lookout = field(repr=False, compare=False)
+
+    async def url(self) -> str | None:
+        if await message_exists(self.bot, self.channel_id, self.message_id):
+            return f"https://cdn.discordapp.com/attachments/{self.channel_id}/{self.attachment_id}/{self.filename}"
+        else:
+            return None
 
     def format_upload_time(self) -> str:
         return discord.utils.format_dt(self.first_upload.to_datetime(), 'D')
 
-    def to_item(self) -> discord.ui.Item:
-        if self.url is None:
+    async def to_item(self) -> discord.ui.Item:
+        url = await self.url()
+        if url is None:
             return File(discord.File(io.BytesIO(self.content.encode()), filename=self.filename))
         else:
-            return discord.ui.TextDisplay(self.url)
+            return discord.ui.TextDisplay(url)
 
 
 class Gamelogs(commands.Cog):
@@ -66,21 +91,6 @@ class Gamelogs(commands.Cog):
 
     def __init__(self, bot: Lookout) -> None:
         self.bot = bot
-
-    async def message_exists(self, channel_id: int, message_id: int) -> bool:
-        if (a := config.message_exists(channel_id, message_id)) is not None:
-            return a
-
-        channel = self.bot.get_channel(channel_id)
-        if not isinstance(channel, discord.TextChannel):
-            return False
-
-        try:
-            await channel.fetch_message(message_id)
-        except discord.NotFound:
-            return False
-
-        return True
 
     @needs_db
     async def fetch_log(self, conn: Connection, game: gamelogs.GameResult) -> Gamelog:
@@ -97,12 +107,7 @@ class Gamelogs(commands.Cog):
             raise ValueError("game not found")
 
         channel_id, message_id, attachment_id, filename, content, *timecode = r
-        if await self.message_exists(channel_id, message_id):
-            url = f"https://cdn.discordapp.com/attachments/{channel_id}/{attachment_id}/{filename}"
-        else:
-            url = None
-
-        return Gamelog(content, filename, url, Timecode(*timecode))
+        return Gamelog(content, filename, channel_id, message_id, attachment_id, Timecode(*timecode), self.bot)
 
     async def see_log(self, conn: Connection, digest: str, clean_content: str, *, pandora: bool = False, force: bool = False) -> bool:
         game, message_count = parse_game(clean_content, pandora=pandora)

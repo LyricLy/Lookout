@@ -166,7 +166,7 @@ class SearchResults(ViewContainer):
         if self.file:
             self.file._update_view(None)  # the library doesn't do this...?
             self.remove_item(self.file)
-        self.file = log.to_item()
+        self.file = await log.to_item()
         self.add_item(self.file)
         self._children.insert(self._children.index(self.sep), self._children.pop())
 
