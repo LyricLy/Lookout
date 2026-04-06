@@ -1,5 +1,6 @@
 import functools
 import logging
+import time
 from types import CoroutineType
 from typing import Any, Callable, Concatenate, Protocol, Awaitable
 
@@ -51,12 +52,13 @@ def needs_db(*, transact: bool = True):
 def transaction[T, **P, R](f: Callable[Concatenate[T, Connection, P], Awaitable[R]]) -> Callable[Concatenate[T, Connection, P], CoroutineType[Any, Any, R]]:
     @functools.wraps(f)
     async def inner(self: T, conn: Connection, *args: P.args, **kwargs: P.kwargs) -> R:
-        log.info("%s starting transaction", f)
+        start = time.perf_counter()
         async with conn.transaction():
             try:
                 return await f(self, conn, *args, **kwargs)
             finally:
-                log.info("%s ending transaction", f)
+                if (duration := time.perf_counter()) >= 5:
+                    log.warn("%s kept transaction open for %fs", duration)
 
     return inner
 

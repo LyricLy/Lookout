@@ -38,7 +38,7 @@ class Winrate:
         except ZeroDivisionError:
             return "N/A (no games)"
         else:
-            return f"{centre*100:.2f}% ± {radius*100:.2f}% ({self.s}/{self.n})"
+            return f"{centre:.2%} ± {radius:.2%} ({self.s}/{self.n})"
 
     def __add__(self, other: Winrate) -> Winrate:
         return Winrate(self.s + other.s, self.n + other.n)
