@@ -38,7 +38,7 @@ def needs_db(*, transact: bool = True):
 
         @functools.wraps(f)
         async def inner(self: T, *args: P.args, **kwargs: P.kwargs) -> R:
-            async with self.bot.db.acquire() as conn, conn.transaction():
+            async with self.bot.db.acquire() as conn:
                 return await f(self, conn, *args, **kwargs)
 
         sig = commands.parameters.Signature.from_callable(f)
@@ -57,8 +57,8 @@ def transaction[T, **P, R](f: Callable[Concatenate[T, Connection, P], Awaitable[
             try:
                 return await f(self, conn, *args, **kwargs)
             finally:
-                if (duration := time.perf_counter()) >= 5:
-                    log.warn("%s kept transaction open for %fs", duration)
+                if (duration := time.perf_counter() - start) >= 5:
+                    log.warn("%s kept transaction open for %fs", f.__qualname__, duration)
 
     return inner
 

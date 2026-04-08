@@ -4,7 +4,7 @@ import discord
 from discord.ext import commands
 
 from .bot import *
-from .player_info import PlayerRater
+from .player_info import PlayerRating, RATINGS, model
 from .specifiers import IdentitySpecifier
 from .winrate import Winrate
 
@@ -74,8 +74,11 @@ class RatingCriterion(Criterion[float]):
         return f"{key:.0f}"
 
     async def decorate_players(self, stats: Stats, conn: Connection) -> list[tuple[DisplayablePlayer, float]]:
-        rater = await PlayerRater.new(conn, stats.now())
-        return [(player, rating.ordinal()) for player in await stats.fetch_players(conn) if (rating := rater.rate(player))]
+        at = stats.now()
+        return [
+            (stats.fetch_player(player), PlayerRating(model.rating(mu, sigma), conn, at).ordinal())
+            for player, mu, sigma in await conn.fetchall(f"SELECT player, mu, sigma FROM {RATINGS} WHERE NOT EXISTS(SELECT 1 FROM Hidden WHERE player = Ratings.player)", (at,))
+        ]
 
     @classmethod
     async def convert(cls, ctx: Context, argument: str) -> Self:

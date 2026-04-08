@@ -73,21 +73,3 @@ class PlayerRating:
     async def rank(self) -> int:
         rank, = await self.conn.fetchone(f"SELECT 1 + COUNT(*) FROM {RATINGS} WHERE mu - 3.0 * sigma > ?", (self.at, self.rating.ordinal()))
         return rank
-
-
-class PlayerRater:
-    def __init__(self, ratings: dict[int, PlackettLuceRating], conn: Connection, at: Timecode) -> None:
-        self.ratings = ratings
-        self.conn = conn
-        self.at = at
-
-    @classmethod
-    async def new(cls, conn: Connection, at: Timecode) -> Self:
-        d: dict[int, PlackettLuceRating] = {}
-        for player, mu, sigma in await conn.fetchall(f"SELECT player, mu, sigma FROM {RATINGS} WHERE NOT EXISTS(SELECT 1 FROM Hidden WHERE player = Ratings.player)", (at,)):
-            d[player] = model.rating(mu, sigma)
-        return cls(d, conn, at)
-
-    def rate(self, player: PlayerInfo) -> PlayerRating | None:
-        r = self.ratings.get(player.id)
-        return PlayerRating(r, self.conn, self.at) if r else None
