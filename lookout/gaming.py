@@ -43,8 +43,7 @@ class ReglePanel(ViewContainer):
 
     ar = discord.ui.ActionRow()
 
-    @needs_db
-    async def finish(self, conn: Connection, guess: gamelogs.Faction, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+    async def finish(self, guess: gamelogs.Faction, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         log = await self.bot.require_cog(Gamelogs).fetch_log(self.game)
 
         self.accent_colour = discord.Colour(0x06e00c if self.game.victor == gamelogs.town else 0xb545ff)
@@ -60,7 +59,8 @@ class ReglePanel(ViewContainer):
         self.add_item(await log.to_item())
         self._children.insert(self._children.index(self.sep), self._children.pop())
 
-        await conn.execute("INSERT INTO RegleGames (player_id, guessed, correct, gist) VALUES (?, ?, ?, ?)", (interaction.user.id, guess, self.game.victor, gist_of(self.game)))
+        async with self.bot.acquire() as conn:
+            await conn.execute("INSERT INTO RegleGames (player_id, guessed, correct, gist) VALUES (?, ?, ?, ?)", (interaction.user.id, guess, self.game.victor, gist_of(self.game)))
 
         self.view.stop()  # type: ignore
         await interaction.response.edit_message(**self.edit_args())
@@ -109,10 +109,10 @@ class WillePanel(ViewContainer):
 
     ar = discord.ui.ActionRow()
     @ar.select(cls=discord.ui.UserSelect, placeholder="Make a guess")
-    @needs_db
-    async def guess(self, conn: Connection, interaction: discord.Interaction, select: discord.ui.UserSelect) -> None:
+    async def guess(self, interaction: discord.Interaction, select: discord.ui.UserSelect) -> None:
         guess = select.values[0]
-        r = await conn.fetchone("SELECT player, (SELECT COUNT(*) >= 50 FROM Appearances WHERE player = DiscordConnections.player) FROM DiscordConnections WHERE discord_id = ?", (guess.id,))
+        async with self.bot.acquire() as conn:
+            r = await conn.fetchone("SELECT player, (SELECT COUNT(*) >= 50 FROM Appearances WHERE player = DiscordConnections.player) FROM DiscordConnections WHERE discord_id = ?", (guess.id,))
         if not r:
             await interaction.response.send_message("I don't know what their ToS2 account is.", ephemeral=True)
             return
@@ -133,7 +133,8 @@ class WillePanel(ViewContainer):
         self.add_item(await log.to_item())
         self._children.insert(self._children.index(self.sep), self._children.pop())
 
-        await conn.execute("INSERT INTO WilleGames (player_id, guessed, correct, gist) VALUES (?, ?, ?, ?)", (interaction.user.id, guessed, self.correct, gist_of(self.game)))
+        async with self.bot.acquire() as conn:
+            await conn.execute("INSERT INTO WilleGames (player_id, guessed, correct, gist) VALUES (?, ?, ?, ?)", (interaction.user.id, guessed, self.correct, gist_of(self.game)))
 
         self.view.stop()  # type: ignore
         await interaction.response.edit_message(**self.edit_args())
