@@ -117,7 +117,7 @@ class WillePanel(ViewContainer):
 
         correct = guessed == self.correct
         header = "Will done!" if correct else "Unlucky..."
-        select.placeholder = f"You guessed {self.user.global_name}"
+        select.placeholder = f"You guessed {guess.global_name}"
         self.end(f"{header}\n{self.user.mention} — {self.player.ending_ident}\n")
 
         self.add_item(await log.to_item())
