@@ -113,7 +113,7 @@ class WillePanel(ViewContainer):
 
         log = await self.bot.require_cog(Gamelogs).fetch_log(self.game)
 
-        self.display.accessory.media = self.user.avatar.url  # type: ignore
+        self.display.accessory.media = self.user.display_avatar.url  # type: ignore
 
         correct = guessed == self.correct
         header = "Will done!" if correct else "Unlucky..."
