@@ -11,7 +11,7 @@ from .analyzer import *
 def clean_tos2_tags(text: str) -> str:
     text = text.replace("\r\n", "\n")
     text = re.sub(r"<style>(.*?)</style>", r"<goodstyle>\1</goodstyle>", text, flags=re.DOTALL)
-    text = re.sub(r"</?(?:font|link|sprite|color|style)[^>]*>", "", text)
+    text = re.sub(r"</?(?:font|link|sprite|color|style|gradient)[^>]*>", "", text)
     text = text.replace("goodstyle>", "style>")
     # bad formatting bug in gamelogs
     return re.sub(r'<div class="tooltipprev">(.+?)</span></div>$', r'<div class="tooltipprev">\1</div></span>', text, flags=re.MULTILINE)
