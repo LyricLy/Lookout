@@ -125,30 +125,41 @@ class Stats(commands.Cog):
     async def cog_unload(self) -> None:
         self.catchup_task.cancel()
 
-    @needs_db
-    async def update_game(self, conn: Connection, gist: str, from_log: str) -> None:
-        content, = await conn.fetchone("SELECT clean_content FROM Gamelogs WHERE hash = ?", (from_log,))
-        try:
-            game, message_count = await asyncio.to_thread(gamelogs.parse, content, gamelogs.ResultAnalyzer(pandora=True) & gamelogs.MessageCountAnalyzer(), clean_tags=False)
-        except gamelogs.BadLogError:
-            log.exception("failed to update game from log %s", from_log)
-        else:
+    async def update_games(self, games: list[tuple[str, str, gamelogs.Faction]]) -> None:
+        victors_changed = False
+
+        for gist, from_log, old_victor in games:
+            async with self.bot.acquire() as conn:
+                content, = await conn.fetchone("SELECT clean_content FROM Gamelogs WHERE hash = ?", (from_log,))
+
+            try:
+                game, message_count = await asyncio.to_thread(gamelogs.parse, content, gamelogs.ResultAnalyzer(pandora=True) & gamelogs.MessageCountAnalyzer(), clean_tags=False)
+            except gamelogs.BadLogError:
+                log.exception("failed to update game from log %s", from_log)
+                return
+
             assert gist_of(game) == gist
-            await conn.execute("UPDATE Games SET analysis = ?, message_count = ?, analysis_version = ? WHERE gist = ?", (game, message_count, gamelogs.version, gist))
+            async with self.bot.acquire() as conn:
+                await conn.execute("UPDATE Games SET analysis = ?, message_count = ?, analysis_version = ?, victor = ? WHERE gist = ?", (game, message_count, gamelogs.version, gist, game.victor))
+
+            if game.victor != old_victor:
+                victors_changed = True
+
             log.info("updated game from log %s to version %d", from_log, gamelogs.version)
 
-    async def update_games(self, games: list[tuple[str, str]]) -> None:
-        for gist, from_log in games:
-            await self.update_game(gist, from_log)
+        if victors_changed:
+            async with self.bot.acquire() as conn:
+                await conn.execute("UPDATE Globals SET generation = generation + 1")
+            await self.run_games()
 
     async def games(self, injection: str = "", params: Sequence[object] | dict[str, Any] = ()) -> list[gamelogs.GameResult]:
         async with self.bot.acquire() as conn:
-            games = await conn.fetchall(f"SELECT gist, analysis, analysis_version, from_log FROM Games {injection}", params)
+            games = await conn.fetchall(f"SELECT gist, analysis, analysis_version, from_log, victor FROM Games {injection}", params)
         r = []
         to_update = []
-        for gist, game, version, from_log in games:
+        for gist, game, version, from_log, victor in games:
             if version < gamelogs.version:
-                to_update.append((gist, from_log))
+                to_update.append((gist, from_log, victor))
             r.append(game)
         if to_update:
             asyncio.create_task(self.update_games(to_update), context=contextvars.Context())
