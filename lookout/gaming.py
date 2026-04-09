@@ -1,7 +1,9 @@
 import random
+import re
 
 import discord
 import gamelogs
+import parse_discord
 from discord.ext import commands
 
 import config
@@ -94,7 +96,14 @@ class WillePanel(ViewContainer):
 
     def draw(self, header: str, *, obscure: bool = False) -> None:
         assert self.player.will
-        will = self.player.will.replace("<br/>", "\n").replace("<b>", "**").replace("</b>", "**")
+
+        will = parse_discord.Markup([])
+        for chunk in re.finditer(r"<b>(.*?)</b>|((?!<b>).+)", self.player.will.replace("<br/>", "\n"), re.DOTALL):
+            if chunk[1]:
+                will.nodes.append(parse_discord.Bold(parse_discord.Markup([parse_discord.Text(chunk[1])])))
+            else:
+                will.nodes.append(parse_discord.Text(chunk[2]))
+
         self.display.children[0].content = f"# {header}\n{will}"  # type: ignore
 
     ar = discord.ui.ActionRow()
