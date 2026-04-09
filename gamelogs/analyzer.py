@@ -1,5 +1,7 @@
 from collections import defaultdict
 
+from lxml.html import tostring
+
 from .errors import UnsupportedRoleError, NotLogError
 from .messages import *
 from .model import *
@@ -63,7 +65,9 @@ class ResultAnalyzer(Analyzer[GameResult]):
         for colour, (player, *others) in self.townie_colours.items():
             if not others:
                 player.starting_ident.faction = coven
+                player.starting_ident.tt = True
                 player.ending_ident.faction = coven
+                player.ending_ident.tt = True
                 self.modifiers.append("Town Traitor")
                 break
 
@@ -83,7 +87,7 @@ class ResultAnalyzer(Analyzer[GameResult]):
 
     def get_message(self, message: Message) -> None:
         match message:
-            case PlayerInfo(number, game_name, account_name, role, prev_role, _, is_vip):
+            case PlayerInfo(number, game_name, account_name, role, prev_role, will_tree, is_vip):
                 try:
                     ending_ident = Identity(by_name(role[0]))
                     starting_ident = Identity(by_name(prev_role[0])) if prev_role else ending_ident
@@ -94,7 +98,8 @@ class ResultAnalyzer(Analyzer[GameResult]):
                 faction_colour_shown = ending_ident.faction
                 if ending_ident.role != by_name("Vampire"):
                     ending_ident.faction = starting_ident.faction
-                player = Player(number, game_name, account_name, starting_ident, ending_ident)
+                will = (will_tree.text or "") + "".join([tostring(c, encoding="unicode") for c in will_tree.getchildren()]) if will_tree is not None else None
+                player = Player(number, game_name, account_name, starting_ident, ending_ident, will)
                 if is_vip:
                     self.vip = player
                     self.modifiers.append("VIP")

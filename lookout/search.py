@@ -159,7 +159,7 @@ class SearchResults(ViewContainer):
             death = "-#"*bool(player.died)
             obsc = ('\u200b'*obscure).join
             role = f"{player.starting_ident.role} {player.ending_ident.role}" if player.starting_ident != player.ending_ident else f"{player.starting_ident.role}"
-            faction = " (TT)"*player.starting_ident.is_tt()
+            faction = " (TT)"*player.starting_ident.tt
             mark = FOOTNOTES[bl[0]] if (bl := discord.utils.find(lambda t: player.account_name in t[1][1], enumerate(bl_threads))) else ""
             rollout.append(f"{death} - [{player.number}] {obsc(player.game_name)} ({obsc(player.account_name)}{mark}) - {bold}{role}{faction}{bold}")
 
@@ -271,7 +271,7 @@ class SearchQuery(commands.FlagConverter, case_insensitive=True):
             p[f"count_{i}"] = count
             p.update(p2)
 
-        games = bot.require_cog(Stats).games(f"{' '.join(joins)} WHERE ({' AND '.join(where) if where else '1'}) GROUP BY gist ORDER BY rowid DESC", p)
+        games = await bot.require_cog(Stats).games(f"{' '.join(joins)} WHERE ({' AND '.join(where) if where else '1'}) GROUP BY gist ORDER BY rowid DESC", p)
 
         if self.chat:
             patterns = []
@@ -282,7 +282,7 @@ class SearchQuery(commands.FlagConverter, case_insensitive=True):
                 )
 
             results = []
-            async for game in games:
+            for game in games:
                 content, = await conn.fetchone("SELECT clean_content FROM Gamelogs INNER JOIN Games ON hash = from_log WHERE gist = ?", (gist_of(game),))
 
                 for pattern in patterns:
@@ -305,7 +305,7 @@ class SearchQuery(commands.FlagConverter, case_insensitive=True):
                 else:
                     results.append(game)
         else:
-            results = [game async for game in games]
+            results = games
 
         return results
 

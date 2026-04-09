@@ -113,8 +113,7 @@ class Lookout(commands.Bot):
         elif isinstance(error, commands.BadFlagArgument):
             await ctx.send(str(error.original))
         elif isinstance(error, commands.BadUnionArgument):
-            errors = {str(e) for e in error.errors if not isinstance(e, commands.BadLiteralArgument)}
-            await ctx.send("\n".join(errors))
+            await ctx.send(str(error.errors[0]))
         elif isinstance(error, commands.UserInputError):
             await ctx.send(str(error))
 

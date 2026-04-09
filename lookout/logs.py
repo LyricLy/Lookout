@@ -177,9 +177,9 @@ class Gamelogs(commands.Cog):
         return c, tears
 
     @commands.Cog.listener()
-    @needs_db
-    async def on_ready(self, conn: Connection) -> None:
-        start, = await conn.fetchone("SELECT COALESCE(MAX(message_id), 0) FROM Gamelogs")
+    async def on_ready(self) -> None:
+        async with self.bot.acquire() as conn:
+            start, = await conn.fetchone("SELECT COALESCE(MAX(message_id), 0) FROM Gamelogs")
         channel = self.bot.get_partial_messageable(config.gamelog_channel_id)
         log.info("catching up")
         c = 0

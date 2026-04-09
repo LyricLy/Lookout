@@ -1,4 +1,5 @@
 import asyncio
+import contextvars
 import datetime
 import math
 import logging
@@ -136,12 +137,22 @@ class Stats(commands.Cog):
             await conn.execute("UPDATE Games SET analysis = ?, message_count = ?, analysis_version = ? WHERE gist = ?", (game, message_count, gamelogs.version, gist))
             log.info("updated game from log %s to version %d", from_log, gamelogs.version)
 
-    async def games(self, injection: str = "", params: Sequence[object] | dict[str, Any] = ()) -> AsyncIterator[gamelogs.GameResult]:
+    async def update_games(self, games: list[tuple[str, str]]) -> None:
+        for gist, from_log in games:
+            await self.update_game(gist, from_log)
+
+    async def games(self, injection: str = "", params: Sequence[object] | dict[str, Any] = ()) -> list[gamelogs.GameResult]:
         async with self.bot.acquire() as conn:
-            for gist, game, version, from_log in await conn.fetchall(f"SELECT gist, analysis, analysis_version, from_log FROM Games {injection}", params):
-                if version < gamelogs.version:
-                    asyncio.create_task(self.update_game(gist, from_log))
-                yield game
+            games = await conn.fetchall(f"SELECT gist, analysis, analysis_version, from_log FROM Games {injection}", params)
+        r = []
+        to_update = []
+        for gist, game, version, from_log in games:
+            if version < gamelogs.version:
+                to_update.append((gist, from_log))
+            r.append(game)
+        if to_update:
+            asyncio.create_task(self.update_games(to_update), context=contextvars.Context())
+        return r
 
     @needs_db
     async def run_game(self, conn: Connection, game: gamelogs.GameResult):
@@ -182,7 +193,7 @@ class Stats(commands.Cog):
             async with self.catchup:
                 log.info("resolving appearances")
                 c = 0
-                async for game in self.games("INNER JOIN Gamelogs ON hash = first_log, Globals WHERE Games.generation < Globals.generation ORDER BY timecode"):
+                for game in await self.games("INNER JOIN Gamelogs ON hash = first_log, Globals WHERE Games.generation < Globals.generation ORDER BY timecode"):
                     await self.run_game(game)
                     c += 1
                 log.info("resolved appearances from %d games", c)

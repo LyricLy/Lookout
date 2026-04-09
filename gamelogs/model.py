@@ -156,18 +156,18 @@ def by_name(name: str) -> Role:
 class Identity:
     role: Role
     faction: Faction | None
+    tt: bool
 
-    def __init__(self, role: Role, faction: Faction | None = unknown) -> None:
+    def __init__(self, role: Role, faction: Faction | None = unknown, tt: bool = False) -> None:
         object.__setattr__(self, "role", role)
         object.__setattr__(self, "faction", faction if faction != unknown else role.default_faction)
-
-    def is_tt(self) -> bool:
-        # TODO: this should be its own flag
-        return self.faction == coven and self.role.default_faction == town
+        object.__setattr__(self, "tt", tt)
 
     def __str__(self) -> str:
         if self.role.default_faction == self.faction:
             return f"{self.role}"
+        elif self.tt:
+            return f"{self.role} (TT)"
         else:
             return f"{self.role} ({self.faction})"
 
@@ -208,6 +208,7 @@ class Player:
     account_name: str
     starting_ident: Identity = _field(compare=False)
     ending_ident: Identity = _field(compare=False)
+    will: str | None = _field(compare=False)
     died: DayTime | None = _field(compare=False, default=None)
     won: bool = _field(compare=False, default=False)
     hanged: bool = _field(compare=False, default=False)

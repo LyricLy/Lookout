@@ -37,8 +37,7 @@ class Blacklist(commands.Cog):
                 await conn.execute("INSERT INTO Blacklists (thread_id, account_name, reason, no_retrial) VALUES (?, ?, ?, ?)", (thread.id, player, reason, no_retrial))
 
     @commands.Cog.listener()
-    @needs_db
-    async def on_ready(self, conn: Connection) -> None:
+    async def on_ready(self) -> None:
         channel = self.bot.get_channel(config.channel_id)
         assert isinstance(channel, discord.ForumChannel)
         self.channel = channel
@@ -54,9 +53,10 @@ class Blacklist(commands.Cog):
             await self.check_thread(thread, catchup=True)
 
         # removals
-        keep_ids = ",".join(map(str, seen))
-        await conn.execute(f"DELETE FROM Blacklists WHERE thread_id NOT IN ({keep_ids})")
-        await conn.execute(f"DELETE FROM BlacklistGames WHERE thread_id NOT IN ({keep_ids})")
+        async with self.bot.acquire() as conn:
+            keep_ids = ",".join(map(str, seen))
+            await conn.execute(f"DELETE FROM Blacklists WHERE thread_id NOT IN ({keep_ids})")
+            await conn.execute(f"DELETE FROM BlacklistGames WHERE thread_id NOT IN ({keep_ids})")
 
     @commands.Cog.listener()
     @needs_db

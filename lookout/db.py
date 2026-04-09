@@ -21,6 +21,7 @@ log = logging.getLogger(__name__)
 class JIdentity(TypedDict):
     role: str
     faction: str | None
+    tt: bool
 
 JDayTime = tuple[str, int]
 
@@ -30,6 +31,7 @@ class JPlayer(TypedDict):
     account_name: str
     starting_ident: JIdentity
     ending_ident: JIdentity
+    will: str | None
     died: JDayTime | None
     won: bool 
     hanged: bool
@@ -55,6 +57,7 @@ def ser_ident(ident: gamelogs.Identity) -> JIdentity:
     return {
         "role": ident.role.name,
         "faction": repr(ident.faction) if ident.faction else None,
+        "tt": ident.tt,
     }
 
 def ser_player(player: gamelogs.Player) -> JPlayer:
@@ -64,6 +67,7 @@ def ser_player(player: gamelogs.Player) -> JPlayer:
         "account_name": player.account_name,
         "starting_ident": ser_ident(player.starting_ident),
         "ending_ident": ser_ident(player.ending_ident),
+        "will": player.will,
         "died": ser_day_time(player.died) if player.died else None,
         "won": player.won,
         "hanged": player.hanged,
@@ -90,8 +94,9 @@ def de_faction(faction: str | None) -> gamelogs.Faction | None:
 
 def de_ident(ident: JIdentity) -> gamelogs.Identity:
     return gamelogs.Identity(
-        gamelogs.by_name(ident["role"]),
-        de_faction(ident["faction"]),
+        role := gamelogs.by_name(ident["role"]),
+        faction := de_faction(ident["faction"]),
+        ident.get("tt", role.default_faction == gamelogs.town and faction == gamelogs.coven),
     )
 
 def de_player(player: JPlayer) -> gamelogs.Player:
@@ -101,6 +106,7 @@ def de_player(player: JPlayer) -> gamelogs.Player:
         player["account_name"],
         de_ident(player["starting_ident"]),
         de_ident(player["ending_ident"]),
+        player.get("will"),
         de_day_time(player["died"]) if player["died"] else None,
         player["won"],
         player.get("hanged", False),
