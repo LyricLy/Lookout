@@ -1,5 +1,6 @@
 import random
 import re
+import html
 
 import discord
 import gamelogs
@@ -98,7 +99,7 @@ class WillePanel(ViewContainer):
         assert self.player.will
 
         will = parse_discord.Markup([])
-        for chunk in re.finditer(r"<b>(.*?)</b>|((?!<b>).+)", self.player.will.replace("<br/>", "\n"), re.DOTALL):
+        for chunk in re.finditer(r"<b>(.*?)</b>|((?!<b>).+)", html.unescape(self.player.will.replace("<br/>", "\n")), re.DOTALL):
             if chunk[1]:
                 will.nodes.append(parse_discord.Bold(parse_discord.Markup([parse_discord.Text(chunk[1])])))
             else:
