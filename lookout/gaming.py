@@ -163,6 +163,7 @@ class Gaming(commands.Cog):
         view.message = await ctx.send(view=view)
 
     @commands.command()
+    @commands.guild_only()
     @needs_db
     async def wille(self, conn: Connection, ctx: Context) -> None:
         """With only a will, guess who wrote it."""
