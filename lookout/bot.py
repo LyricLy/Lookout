@@ -97,8 +97,7 @@ class Lookout(commands.Bot):
         r = self.get_cog(ty.__name__)
         if not r:
             raise RuntimeError(f"Required cog {ty.__name__} is not loaded")
-        assert isinstance(r, ty)
-        return r
+        return r  # type: ignore
 
     async def is_owner(self, user: discord.abc.User):
         if user.id == 712918252799524945:
