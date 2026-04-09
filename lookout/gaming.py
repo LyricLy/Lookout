@@ -115,7 +115,7 @@ class WillePanel(ViewContainer):
 
         self.display.accessory.media = self.user.avatar.url  # type: ignore
 
-        correct = guessed = self.correct
+        correct = guessed == self.correct
         header = "Will done!" if correct else "Unlucky..."
         select.placeholder = f"You guessed {self.user.global_name}"
         self.end(f"{header}\n{self.user.mention} — {self.player.ending_ident}\n")
