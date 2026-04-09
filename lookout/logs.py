@@ -140,8 +140,7 @@ class Gamelogs(commands.Cog):
         finally:
             await conn.execute("UPDATE Gamelogs SET game = ? WHERE hash = ?", (gist, digest))
 
-    @needs_db
-    async def see_message(self, conn: Connection, message: discord.Message, *, cry: bool = False) -> tuple[int, list[str]]:
+    async def see_message(self, message: discord.Message, *, cry: bool = False) -> tuple[int, list[str]]:
         c = 0
         tears = []
 
@@ -160,10 +159,11 @@ class Gamelogs(commands.Cog):
 
             digest = hashlib.sha256(clean_content.encode()).hexdigest()
             filename_time = datetime_of_filename(attach.filename)
-            await conn.execute(
-                "INSERT OR IGNORE INTO Gamelogs (hash, filename, channel_id, message_id, attachment_id, filename_time, uploader, clean_content) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (digest, attach.filename, message.channel.id, message.id, attach.id, filename_time, message.author.id, clean_content),
-            )
+            async with self.bot.acquire() as conn:
+                await conn.execute(
+                    "INSERT OR IGNORE INTO Gamelogs (hash, filename, channel_id, message_id, attachment_id, filename_time, uploader, clean_content) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (digest, attach.filename, message.channel.id, message.id, attach.id, filename_time, message.author.id, clean_content),
+                )
 
             if not filename_time:
                 tears.append((attach, "Filename does not contain date and time"))
