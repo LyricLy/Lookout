@@ -85,6 +85,8 @@ class ReglePanel(ViewContainer):
 class WillePanel(ViewContainer):
     display = discord.ui.Section("", accessory=discord.ui.Thumbnail(f"{config.base_url}/static/who_wins.png"))
     sep = discord.ui.Separator(spacing=discord.SeparatorSpacing.large)
+    will = discord.ui.TextDisplay("")
+    sep2 = discord.ui.Separator(spacing=discord.SeparatorSpacing.large)
 
     def __init__(self, bot: Lookout, game: gamelogs.GameResult, player: gamelogs.Player, user: discord.User, correct: int) -> None:
         super().__init__(accent_colour=discord.Colour(0xdaa36f))
@@ -105,7 +107,8 @@ class WillePanel(ViewContainer):
             else:
                 will.nodes.append(parse_discord.Text(chunk[2]))
 
-        self.display.children[0].content = f"# {header}\n{will}"  # type: ignore
+        self.display.children[0].content = f"# {header}"  # type: ignore
+        self.will.content = str(will)
 
     ar = discord.ui.ActionRow()
     @ar.select(cls=discord.ui.UserSelect, placeholder="Make a guess")
@@ -128,7 +131,7 @@ class WillePanel(ViewContainer):
         correct = guessed == self.correct
         header = "Will done!" if correct else "Unlucky..."
         select.placeholder = f"You guessed {guess.global_name}"
-        self.end(f"{header}\n{self.user.mention} ({self.user.name}) — {self.player.ending_ident}\n")
+        self.end(f"{header}\n{self.user.mention} ({self.player.account_name}) — {self.player.ending_ident}\n")
 
         self.add_item(await log.to_item())
         self._children.insert(self._children.index(self.sep), self._children.pop())
