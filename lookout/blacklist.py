@@ -22,6 +22,7 @@ class Blacklist(commands.Cog):
         self.bot = bot
         self.channel: discord.ForumChannel | None = None
 
+    @needs_db
     async def check_thread(self, conn: Connection, thread: discord.Thread, *, catchup: bool = False) -> None:
         await conn.execute("DELETE FROM Blacklists WHERE thread_id = ?", (thread.id,))
 
@@ -36,7 +37,7 @@ class Blacklist(commands.Cog):
                 await conn.execute("INSERT INTO Blacklists (thread_id, account_name, reason, no_retrial) VALUES (?, ?, ?, ?)", (thread.id, player, reason, no_retrial))
 
     @commands.Cog.listener()
-    @needs_db()
+    @needs_db
     async def on_ready(self, conn: Connection) -> None:
         channel = self.bot.get_channel(config.channel_id)
         assert isinstance(channel, discord.ForumChannel)
@@ -47,10 +48,10 @@ class Blacklist(commands.Cog):
         # new threads/updates
         for thread in channel.threads:
             seen.append(thread.id)
-            await self.check_thread(conn, thread, catchup=True)
+            await self.check_thread(thread, catchup=True)
         async for thread in channel.archived_threads(limit=None):
             seen.append(thread.id)
-            await self.check_thread(conn, thread, catchup=True)
+            await self.check_thread(thread, catchup=True)
 
         # removals
         keep_ids = ",".join(map(str, seen))
@@ -58,29 +59,28 @@ class Blacklist(commands.Cog):
         await conn.execute(f"DELETE FROM BlacklistGames WHERE thread_id NOT IN ({keep_ids})")
 
     @commands.Cog.listener()
-    @needs_db()
+    @needs_db
     async def on_thread_create(self, conn: Connection, thread: discord.Thread) -> None:
         await asyncio.sleep(1)
-        await self.check_thread(conn, thread)
+        await self.check_thread(thread)
 
         if not await conn.fetchone("SELECT 1 FROM BlacklistGames WHERE thread_id = ?", (thread.id,)):
             await thread.add_tags(discord.Object(id=config.no_logs_tag))
 
     @commands.Cog.listener()
-    @needs_db()
-    async def on_raw_thread_update(self, conn: Connection, payload: discord.RawThreadUpdateEvent) -> None:
+    async def on_raw_thread_update(self, payload: discord.RawThreadUpdateEvent) -> None:
         if self.channel and payload.parent_id == config.channel_id:
             thread = await self.channel.guild.fetch_channel(payload.thread_id)
             assert isinstance(thread, discord.Thread)
-            await self.check_thread(conn, thread)
+            await self.check_thread(thread)
 
     @commands.Cog.listener()
-    @needs_db()
+    @needs_db
     async def on_raw_thread_delete(self, conn: Connection, payload: discord.RawThreadDeleteEvent) -> None:
         if payload.parent_id == config.channel_id:
             await conn.execute("DELETE FROM Blacklists WHERE thread_id = ?", (payload.thread_id,))
 
-    @needs_db()
+    @needs_db
     async def check_for_logs(self, conn: Connection, message: discord.Message) -> bool:
         did_anything = False
 
@@ -111,7 +111,7 @@ class Blacklist(commands.Cog):
 
     @commands.command()
     @commands.is_owner()
-    @needs_db()
+    @needs_db
     async def bldump(self, conn: Connection, ctx: Context, target: discord.ForumChannel) -> None:
         """Write the blacklist to a target forum channel."""
         if target.id == config.channel_id:

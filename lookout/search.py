@@ -102,10 +102,10 @@ class SearchResults(ViewContainer):
     def has_page(self, num: int) -> bool:
         return 0 <= num < len(self.results)
 
-    @needs_db()
+    @needs_db
     async def draw(self, conn: Connection, *, obscure: bool = False) -> None:
         game = self.results[self.page]
-        log = await self.bot.require_cog(Gamelogs).fetch_log(conn, game)
+        log = await self.bot.require_cog(Gamelogs).fetch_log(game)
 
         self.accent_colour = discord.Colour(0x06e00c if game.victor == gamelogs.town else 0xb545ff if game.victor == gamelogs.coven else 0x06cae0)
 
@@ -271,7 +271,7 @@ class SearchQuery(commands.FlagConverter, case_insensitive=True):
             p[f"count_{i}"] = count
             p.update(p2)
 
-        games = bot.require_cog(Stats).games(conn, f"{' '.join(joins)} WHERE ({' AND '.join(where) if where else '1'}) GROUP BY gist ORDER BY rowid DESC", p)
+        games = bot.require_cog(Stats).games(f"{' '.join(joins)} WHERE ({' AND '.join(where) if where else '1'}) GROUP BY gist ORDER BY rowid DESC", p)
 
         if self.chat:
             patterns = []
@@ -298,7 +298,7 @@ class SearchQuery(commands.FlagConverter, case_insensitive=True):
                         except StopIteration:
                             continue
 
-                        if any([await spec.matches(conn, game, author) for spec in self.author]):
+                        if any([await spec.matches(game, author) for spec in self.author]):
                             break
                     else:
                         break
@@ -319,7 +319,7 @@ class Search(commands.Cog):
         self.bot = bot
 
     @commands.command()
-    @needs_db()
+    @needs_db
     async def search(self, conn: Connection, ctx: Context, *, query: SearchQuery) -> None:
         """Search for games.
 

@@ -243,13 +243,13 @@ class PlayerSpecifier(IdentitySpecifier):
     name: str | None = None
     ign: str | None = None
 
-    async def matches(self, conn: Connection, game: gamelogs.GameResult, player: gamelogs.Player) -> bool:
+    async def matches(self, game: gamelogs.GameResult, player: gamelogs.Player) -> bool:
         return (
             (player.starting_ident.role in self.roles or player.ending_ident.role in self.roles)
         and (self.faction is None or player.ending_ident.faction == self.faction)
         and (self.won is None or player.won == self.won)
         and (self.hunt is None or game.saw_hunt(player) == self.hunt)
-        and (self.player is None or player.account_name.casefold() in [name.casefold() for name in await self.player.names(conn)])
+        and (self.player is None or player.account_name.casefold() in [name.casefold() for name in await self.player.names()])
         and (self.name is None or player.account_name.casefold() == self.name.casefold())
         and (self.ign is None or player.game_name == self.ign)
         )

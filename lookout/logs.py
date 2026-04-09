@@ -92,6 +92,7 @@ class Gamelogs(commands.Cog):
     def __init__(self, bot: Lookout) -> None:
         self.bot = bot
 
+    @needs_db
     async def fetch_log_with_gist(self, conn: Connection, gist: str) -> Gamelog:
         r = await conn.fetchone("""
             SELECT
@@ -108,9 +109,11 @@ class Gamelogs(commands.Cog):
         channel_id, message_id, attachment_id, filename, content, *timecode = r
         return Gamelog(content, filename, channel_id, message_id, attachment_id, Timecode(*timecode), self.bot)
 
+    @needs_db
     async def fetch_log(self, conn: Connection, game: gamelogs.GameResult) -> Gamelog:
-        return await self.fetch_log_with_gist(conn, gist_of(game))
+        return await self.fetch_log_with_gist(gist_of(game))
 
+    @needs_db
     async def see_log(self, conn: Connection, digest: str, clean_content: str, *, pandora: bool = False, force: bool = False) -> bool:
         game, message_count = parse_game(clean_content, pandora=pandora)
 
@@ -137,7 +140,7 @@ class Gamelogs(commands.Cog):
         finally:
             await conn.execute("UPDATE Gamelogs SET game = ? WHERE hash = ?", (gist, digest))
 
-    @transaction
+    @needs_db
     async def see_message(self, conn: Connection, message: discord.Message, *, cry: bool = False) -> tuple[int, list[str]]:
         c = 0
         tears = []
@@ -167,32 +170,31 @@ class Gamelogs(commands.Cog):
                 continue
 
             try:
-                c += await self.see_log(conn, digest, clean_content, pandora="!pandora" in message.content, force="!force" in message.content)
+                c += await self.see_log(digest, clean_content, pandora="!pandora" in message.content, force="!force" in message.content)
             except NotAGameError as e:
                 tears.append((attach, str(e)))
 
         return c, tears
 
     @commands.Cog.listener()
-    @needs_db(transact=False)
+    @needs_db
     async def on_ready(self, conn: Connection) -> None:
         start, = await conn.fetchone("SELECT COALESCE(MAX(message_id), 0) FROM Gamelogs")
         channel = self.bot.get_partial_messageable(config.gamelog_channel_id)
         log.info("catching up")
         c = 0
         async for message in channel.history(limit=None, after=discord.Object(id=start)):
-            added, _ = await self.see_message(conn, message)
+            added, _ = await self.see_message(message)
             c += added
         if c:
             self.bot.dispatch("saw_games")
         log.info("caught up on %d games", c)
 
     @commands.Cog.listener()
-    @needs_db(transact=False)
-    async def on_message(self, conn: Connection, message: discord.Message) -> None:
+    async def on_message(self, message: discord.Message) -> None:
         if message.channel.id != config.gamelog_channel_id:
             return
-        added, tears = await self.see_message(conn, message)
+        added, tears = await self.see_message(message)
         log.info("added %d games from %d (issues: %r)", added, message.id, tears)
         if added:
             self.bot.dispatch("saw_games")
@@ -201,7 +203,7 @@ class Gamelogs(commands.Cog):
 
     @commands.command()
     @commands.is_owner()
-    @needs_db()
+    @needs_db
     async def gamedump(self, conn: Connection, ctx: Context) -> None:
         """Dump logs from the database into a folder."""
         cache = {}

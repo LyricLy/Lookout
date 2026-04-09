@@ -1,7 +1,8 @@
 import functools
 import logging
 import time
-from types import CoroutineType
+from contextvars import ContextVar
+from types import CoroutineType, TracebackType
 from typing import Any, Callable, Concatenate, Protocol, Awaitable
 
 import asqlite
@@ -11,7 +12,7 @@ from discord.ext import commands
 from . import db
 
 
-__all__ = ["Connection", "needs_db", "transaction", "Lookout", "Context"]
+__all__ = ["Connection", "needs_db", "Lookout", "Context"]
 
 log = logging.getLogger(__name__)
 
@@ -28,39 +29,50 @@ extensions = [
 
 type Connection = asqlite.ProxiedConnection
 
+
 class HasBot(Protocol):
     bot: Lookout
 
-def needs_db(*, transact: bool = True):
-    def needs_db_deco[T: HasBot, **P, R](f: Callable[Concatenate[T, Connection, P], Awaitable[R]]) -> Callable[Concatenate[T, P], CoroutineType[Any, Any, R]]:
-        if transact:
-            f = transaction(f)
-
-        @functools.wraps(f)
-        async def inner(self: T, *args: P.args, **kwargs: P.kwargs) -> R:
-            async with self.bot.db.acquire() as conn:
-                return await f(self, conn, *args, **kwargs)
-
-        sig = commands.parameters.Signature.from_callable(f)
-        self, _, *args = sig.parameters.values()
-        inner.__signature__ = sig.replace(parameters=[self, *args])  # type: ignore
-
-        return inner
-
-    return needs_db_deco
-
-def transaction[T, **P, R](f: Callable[Concatenate[T, Connection, P], Awaitable[R]]) -> Callable[Concatenate[T, Connection, P], CoroutineType[Any, Any, R]]:
+def needs_db[T: HasBot, **P, R](f: Callable[Concatenate[T, Connection, P], Awaitable[R]]) -> Callable[Concatenate[T, P], CoroutineType[Any, Any, R]]:
     @functools.wraps(f)
-    async def inner(self: T, conn: Connection, *args: P.args, **kwargs: P.kwargs) -> R:
-        start = time.perf_counter()
-        async with conn.transaction():
-            try:
-                return await f(self, conn, *args, **kwargs)
-            finally:
-                if (duration := time.perf_counter() - start) >= 5:
-                    log.warn("%s kept transaction open for %fs", f.__qualname__, duration)
+    async def inner(self: T, *args: P.args, **kwargs: P.kwargs) -> R:
+        async with self.bot.acquire() as conn:
+            return await f(self, conn, *args, **kwargs)
+
+    sig = commands.parameters.Signature.from_callable(f)
+    self, _, *args = sig.parameters.values()
+    inner.__signature__ = sig.replace(parameters=[self, *args])  # type: ignore
 
     return inner
+
+
+current_connection: ContextVar[Connection] = ContextVar("current_connection")
+
+class Acquisition:
+    def __init__(self, pool: asqlite.Pool) -> None:
+        self.pool = pool
+        self.token = None
+
+    async def __aenter__(self) -> Connection:
+        conn = current_connection.get(None)
+        if not conn:
+            conn = await self.pool.acquire()
+            self.token = current_connection.set(conn)
+            self.start = time.perf_counter()
+        self.conn = conn
+        self.save = db.rand_ident()
+        await conn.execute(f"SAVEPOINT {self.save}")
+        return conn
+
+    async def __aexit__(self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: TracebackType | None) -> None:
+        if exc_value:
+            await self.conn.execute(f"ROLLBACK TO {self.save}")
+        await self.conn.execute(f"RELEASE {self.save}")
+        if self.token:
+            if (duration := time.perf_counter() - self.start) >= 5:
+                log.warn("transaction kept open for %fs", duration)
+            current_connection.reset(self.token)
+            await self.conn.close()
 
 
 type Context = commands.Context[Lookout]
@@ -106,11 +118,14 @@ class Lookout(commands.Bot):
         elif isinstance(error, commands.UserInputError):
             await ctx.send(str(error))
 
+    def acquire(self) -> Acquisition:
+        return Acquisition(self.pool)
+
     async def setup_hook(self) -> None:
-        self.db = await db.create_pool("the.db")
+        self.pool = await db.create_pool("the.db")
         for extension in extensions:
             await self.load_extension(extension, package=__name__)
 
     async def close(self) -> None:
-        await self.db.close()
+        await self.pool.close()
         await super().close()

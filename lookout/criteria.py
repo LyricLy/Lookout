@@ -4,30 +4,28 @@ import discord
 from discord.ext import commands
 
 from .bot import *
-from .player_info import PlayerRating, RATINGS, model
+from .player_info import PlayerInfo, PlayerRating, RATINGS, model
 from .specifiers import IdentitySpecifier
+from .timecode import Timecode
 from .winrate import Winrate
-
-if TYPE_CHECKING:
-    from .stats import Stats
 
 
 class DisplayablePlayer(Protocol):
-    async def names(self, conn: Connection) -> list[str]: ...
-    async def user(self, conn: Connection) -> discord.User | None: ...
+    async def names(self) -> list[str]: ...
+    async def user(self) -> discord.User | None: ...
 
 
 class ReglePlayerInfo:
     def __init__(self, user: discord.User) -> None:
         self._user = user
 
-    async def names(self, conn: Connection) -> list[str]:
+    async def names(self) -> list[str]:
         r = [self._user.name, str(self._user.id)]
         if self._user.global_name:
             r.append(self._user.global_name)
         return r
 
-    async def user(self, conn: Connection) -> discord.User | None:
+    async def user(self) -> discord.User | None:
         return self._user
 
 
@@ -45,7 +43,7 @@ class Criterion[K: Key]:
     def show_key(self, key: K) -> str:
         raise NotImplementedError
 
-    async def decorate_players(self, stats: Stats, conn: Connection) -> list[tuple[DisplayablePlayer, K]]:
+    async def decorate_players(self, at: Timecode) -> list[tuple[DisplayablePlayer, K]]:
         raise NotImplementedError
 
     @classmethod
@@ -67,16 +65,19 @@ class Criterion[K: Key]:
 
 
 class RatingCriterion(Criterion[float]):
+    def __init__(self, bot: Lookout) -> None:
+        self.bot = bot
+
     def desc(self) -> str | None:
         return None
 
     def show_key(self, key: float) -> str:
         return f"{key:.0f}"
 
-    async def decorate_players(self, stats: Stats, conn: Connection) -> list[tuple[DisplayablePlayer, float]]:
-        at = stats.now()
+    @needs_db
+    async def decorate_players(self, conn: Connection, at: Timecode) -> list[tuple[DisplayablePlayer, float]]:
         return [
-            (stats.fetch_player(player), PlayerRating(model.rating(mu, sigma), conn, at).ordinal())
+            (PlayerInfo(player, self.bot), PlayerRating(model.rating(mu, sigma), at, self.bot).ordinal())
             for player, mu, sigma in await conn.fetchall(f"SELECT player, mu, sigma FROM {RATINGS} WHERE NOT EXISTS(SELECT 1 FROM Hidden WHERE player = Ratings.player)", (at,))
         ]
 
@@ -84,14 +85,15 @@ class RatingCriterion(Criterion[float]):
     async def convert(cls, ctx: Context, argument: str) -> Self:
         if argument.lower() != "rating":
             raise commands.BadArgument()
-        return cls()
+        return cls(ctx.bot)
 
 
 HIDDEN_CLAUSE = "NOT EXISTS(SELECT 1 FROM Hidden WHERE player = Appearances.player) AND "
 
 
 class WinrateCriterion(Criterion[Winrate]):
-    def __init__(self, spec: IdentitySpecifier) -> None:
+    def __init__(self, bot: Lookout, spec: IdentitySpecifier) -> None:
+        self.bot = bot
         self.spec = spec
 
     def desc(self) -> str | None:
@@ -104,23 +106,26 @@ class WinrateCriterion(Criterion[Winrate]):
     def show_key(self, key: Winrate) -> str:
         return str(key)
 
-    async def decorate_players(self, stats: Stats, conn: Connection) -> list[tuple[DisplayablePlayer, Winrate]]:
+    @needs_db
+    async def decorate_players(self, conn: Connection, at: Timecode) -> list[tuple[DisplayablePlayer, Winrate]]:
+        # NOTE: `at` is ignored currently
         c, p = self.spec.to_sql()
         rs = await conn.fetchall(f"SELECT player, COALESCE(SUM(won), 0), COUNT(*) FROM Appearances WHERE {HIDDEN_CLAUSE}{c} GROUP BY player", p)
-        return [(stats.fetch_player(player), Winrate(s, n)) for player, s, n in rs]
+        return [(PlayerInfo(player, self.bot), Winrate(s, n)) for player, s, n in rs]
 
     @classmethod
     async def convert(cls, ctx: Context, argument: str) -> Self:
         if argument.lower() == "overall":
-            return cls(IdentitySpecifier())
+            return cls(ctx.bot, IdentitySpecifier())
         spec = await IdentitySpecifier.convert(ctx, argument)
         if spec.won is not None:
             raise commands.BadArgument()
-        return cls(spec)
+        return cls(ctx.bot, spec)
 
 
 class GamesPlayedCriterion(Criterion[int]):
-    def __init__(self, spec: IdentitySpecifier) -> None:
+    def __init__(self, bot: Lookout, spec: IdentitySpecifier) -> None:
+        self.bot = bot
         self.spec = spec
 
     def desc(self) -> str | None:
@@ -135,10 +140,12 @@ class GamesPlayedCriterion(Criterion[int]):
     def show_key(self, key: int) -> str:
         return f"{key:,}"
 
-    async def decorate_players(self, stats: Stats, conn: Connection) -> list[tuple[DisplayablePlayer, int]]:
+    @needs_db
+    async def decorate_players(self, conn: Connection, at: Timecode) -> list[tuple[DisplayablePlayer, int]]:
+        # NOTE: `at` is ignored currently
         c, p = self.spec.to_sql()
         rs = await conn.fetchall(f"SELECT player, COUNT(*) FROM Appearances WHERE {HIDDEN_CLAUSE*(self.spec.won is not None)}{c} GROUP BY player", p)
-        return [(stats.fetch_player(player), n) for player, n in rs]
+        return [(PlayerInfo(player, self.bot), n) for player, n in rs]
 
     @classmethod
     async def convert(cls, ctx: Context, argument: str) -> Self:
@@ -154,40 +161,50 @@ class GamesPlayedCriterion(Criterion[int]):
         spec = await IdentitySpecifier.convert(ctx, argument)
         if not is_played and spec.won is None:
             raise commands.BadArgument()
-        return cls(spec)
+        return cls(ctx.bot, spec)
 
 
 class RegleWinrateCriterion(Criterion[Winrate]):
+    def __init__(self, bot: Lookout) -> None:
+        self.bot = bot
+
     def desc(self) -> str | None:
         return "winrate in Regle"
 
     def show_key(self, key: Winrate) -> str:
         return str(key)
 
-    async def decorate_players(self, stats: Stats, conn: Connection) -> list[tuple[DisplayablePlayer, Winrate]]:
+    @needs_db
+    async def decorate_players(self, conn: Connection, at: Timecode) -> list[tuple[DisplayablePlayer, Winrate]]:
+        # `at` is unused
         rs = await conn.fetchall("SELECT player_id, COALESCE(SUM(guessed = correct), 0), COUNT(*) FROM RegleGames GROUP BY player_id")
-        return [(ReglePlayerInfo(player), Winrate(s, n)) for player_id, s, n in rs if (player := stats.bot.get_user(player_id))]
+        return [(ReglePlayerInfo(player), Winrate(s, n)) for player_id, s, n in rs if (player := self.bot.get_user(player_id))]
 
     @classmethod
     async def convert(cls, ctx: Context, argument: str) -> Self:
         if argument.lower() != "regle":
             raise commands.BadArgument()
-        return cls()
+        return cls(ctx.bot)
 
 
 class RegleGamesPlayedCriterion(Criterion[int]):
+    def __init__(self, bot: Lookout) -> None:
+        self.bot = bot
+
     def desc(self) -> str | None:
         return "number of games played of Regle"
 
     def show_key(self, key: int) -> str:
         return f"{key:,}"
 
-    async def decorate_players(self, stats: Stats, conn: Connection) -> list[tuple[DisplayablePlayer, int]]:
+    @needs_db
+    async def decorate_players(self, conn: Connection, at: Timecode) -> list[tuple[DisplayablePlayer, int]]:
+        # `at` is unused
         rs = await conn.fetchall("SELECT player_id, COUNT(*) FROM RegleGames GROUP BY player_id")
-        return [(ReglePlayerInfo(player), n) for player_id, n in rs if (player := stats.bot.get_user(player_id))]
+        return [(ReglePlayerInfo(player), n) for player_id, n in rs if (player := self.bot.get_user(player_id))]
 
     @classmethod
     async def convert(cls, ctx: Context, argument: str) -> Self:
         if argument.lower() not in ["played regle", "regle played"]:
             raise commands.BadArgument()
-        return cls()
+        return cls(ctx.bot)

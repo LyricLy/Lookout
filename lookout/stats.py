@@ -27,19 +27,17 @@ class Jump(discord.ui.Modal):
     def __init__(self, container: TopPaginator) -> None:
         super().__init__(title="Jump to page")
         self.container = container
-        self.bot = container.bot
         self.box.component.default = f"{container.page+1}"  # type: ignore
 
     box = discord.ui.Label(text="Destination", description="A page number or name of a player to jump to.", component=discord.ui.TextInput(max_length=32))
 
-    @needs_db()
-    async def on_submit(self, conn: Connection, interaction: discord.Interaction) -> None:
+    async def on_submit(self, interaction: discord.Interaction) -> None:
         t: str = self.box.component.value  # type: ignore
         try:
             page = int(t) - 1
         except ValueError:
             for idx, (player, _) in enumerate(self.container.players):
-                if any([name.casefold() == t.casefold() for name in await player.names(conn)]):
+                if any([name.casefold() == t.casefold() for name in await player.names()]):
                     break
             else:
                 await interaction.response.send_message(f"I don't know a player called '{t}'.", ephemeral=True)
@@ -50,7 +48,7 @@ class Jump(discord.ui.Modal):
                 await interaction.response.send_message(f"Page number {page+1} is out of bounds.", ephemeral=True)
                 return
             self.container.go_to_page(page)
-        await self.container.draw(conn)
+        await self.container.draw()
         await interaction.response.edit_message(view=self.container.view)
 
 
@@ -60,14 +58,13 @@ class TopPaginator[K: Key](ViewContainer):
     def __init__(self, stats: Stats, crit: Criterion[K]) -> None:
         super().__init__(accent_colour=discord.Colour(0xfce703))
         self.stats = stats
-        self.bot = stats.bot
         self.crit: Criterion = crit
         self.per_page = 15
 
-    async def start(self, conn: Connection) -> None:
-        self.players = sorted(await self.crit.decorate_players(self.stats, conn), key=lambda p: p[1], reverse=True)
+    async def start(self) -> None:
+        self.players = sorted(await self.crit.decorate_players(self.stats.now()), key=lambda p: p[1], reverse=True)
         self.go_to_page(0)
-        await self.draw(conn)
+        await self.draw()
 
     def key_desc(self) -> str:
         desc = self.crit.desc()
@@ -76,14 +73,14 @@ class TopPaginator[K: Key](ViewContainer):
     def has_page(self, num: int) -> bool:
         return 0 <= num*self.per_page < len(self.players)
 
-    async def _render_player(self, conn: Connection, player: DisplayablePlayer, key: K, obscure: bool) -> str:
-        user = await player.user(conn)
-        names = await player.names(conn)
+    async def _render_player(self, player: DisplayablePlayer, key: K, obscure: bool) -> str:
+        user = await player.user()
+        names = await player.names()
         return f"{f'{user.mention}' if user else ('\u200b'*obscure).join(names[0])} - {self.crit.show_key(key)}"
 
-    async def draw(self, conn: Connection, *, obscure: bool = False) -> None:
+    async def draw(self, *, obscure: bool = False) -> None:
         start = self.page*self.per_page
-        lb = "\n".join([f"{start+1}. {await self._render_player(conn, player, key, obscure)}" for player, key in self.players[start:start+self.per_page]])
+        lb = "\n".join([f"{start+1}. {await self._render_player(player, key, obscure)}" for player, key in self.players[start:start+self.per_page]])
         self.display.content = f"# Leaderboard\n{self.key_desc()}\n{lb}\n-# Page {self.page+1} of {math.ceil(len(self.players) / self.per_page):,}"
 
     def go_to_page(self, num: int) -> None:
@@ -94,26 +91,23 @@ class TopPaginator[K: Key](ViewContainer):
     ar = discord.ui.ActionRow()
 
     @ar.button(label="Prev", emoji="⬅️")
-    @needs_db()
-    async def previous(self, conn: Connection, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+    async def previous(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         self.go_to_page(self.page - 1)
-        await self.draw(conn)
+        await self.draw()
         await interaction.response.edit_message(view=self.view)
 
     @ar.button(label="Next", emoji="➡️")
-    @needs_db()
-    async def next(self, conn: Connection, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+    async def next(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         self.go_to_page(self.page + 1)
-        await self.draw(conn)
+        await self.draw()
         await interaction.response.edit_message(view=self.view)
 
     @ar.button(label="Jump", emoji="↪️")
     async def jump(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await interaction.response.send_modal(Jump(self))
 
-    @needs_db()
-    async def destroy(self, conn: Connection) -> None:
-        await self.draw(conn, obscure=True)
+    async def destroy(self) -> None:
+        await self.draw(obscure=True)
         self.remove_item(self.ar)
 
 
@@ -130,6 +124,7 @@ class Stats(commands.Cog):
     async def cog_unload(self) -> None:
         self.catchup_task.cancel()
 
+    @needs_db
     async def update_game(self, conn: Connection, gist: str, from_log: str) -> None:
         content, = await conn.fetchone("SELECT clean_content FROM Gamelogs WHERE hash = ?", (from_log,))
         try:
@@ -141,15 +136,16 @@ class Stats(commands.Cog):
             await conn.execute("UPDATE Games SET analysis = ?, message_count = ?, analysis_version = ? WHERE gist = ?", (game, message_count, gamelogs.version, gist))
             log.info("updated game from log %s to version %d", from_log, gamelogs.version)
 
-    async def games(self, conn: Connection, injection: str = "", params: Sequence[object] | dict[str, Any] = ()) -> AsyncIterator[gamelogs.GameResult]:
-        for gist, game, version, from_log in await conn.fetchall(f"SELECT gist, analysis, analysis_version, from_log FROM Games {injection}", params):
-            if version < gamelogs.version:
-                asyncio.create_task(self.update_game(conn, gist, from_log))
-            yield game
+    async def games(self, injection: str = "", params: Sequence[object] | dict[str, Any] = ()) -> AsyncIterator[gamelogs.GameResult]:
+        async with self.bot.acquire() as conn:
+            for gist, game, version, from_log in await conn.fetchall(f"SELECT gist, analysis, analysis_version, from_log FROM Games {injection}", params):
+                if version < gamelogs.version:
+                    asyncio.create_task(self.update_game(gist, from_log))
+                yield game
 
-    @transaction
+    @needs_db
     async def run_game(self, conn: Connection, game: gamelogs.GameResult):
-        log = await self.bot.require_cog(Gamelogs).fetch_log(conn, game)
+        log = await self.bot.require_cog(Gamelogs).fetch_log(game)
         gist = gist_of(game)
 
         await conn.execute("DELETE FROM Appearances WHERE game = ?", (gist,))
@@ -157,10 +153,10 @@ class Stats(commands.Cog):
         teams: list[list[tuple[gamelogs.Player, PlayerInfo]]] = [[], []]
         ratings: list[list[PlackettLuceRating]] = [[], []]
         for player in game.players:
-            info: PlayerInfo = await self.fetch_player_by_name(conn, player.account_name)  # type: ignore
+            info: PlayerInfo = await self.fetch_player_by_name(player.account_name)  # type: ignore
             i = player.ending_ident.faction == gamelogs.coven
             teams[i].append((player, info))
-            rating = await info.rating(conn, log.first_upload, this_gen=True)
+            rating = await info.rating(log.first_upload, this_gen=True)
             ratings[i].append(rating.rating if rating else model.rating())
 
         # pad coven
@@ -181,14 +177,13 @@ class Stats(commands.Cog):
 
         await conn.execute("UPDATE Games SET generation = Globals.generation FROM Globals WHERE gist = ?", (gist,))
 
-    @needs_db(transact=False)
-    async def run_games(self, conn: Connection):
+    async def run_games(self):
         try:
             async with self.catchup:
                 log.info("resolving appearances")
                 c = 0
-                async for game in self.games(conn, "INNER JOIN Gamelogs ON hash = first_log, Globals WHERE Games.generation < Globals.generation ORDER BY timecode"):
-                    await self.run_game(conn, game)
+                async for game in self.games("INNER JOIN Gamelogs ON hash = first_log, Globals WHERE Games.generation < Globals.generation ORDER BY timecode"):
+                    await self.run_game(game)
                     c += 1
                 log.info("resolved appearances from %d games", c)
         except Exception:
@@ -210,18 +205,21 @@ class Stats(commands.Cog):
     def fetch_player(self, player: int) -> PlayerInfo:
         return PlayerInfo(player, self.bot)
 
+    @needs_db
     async def fetch_player_by_name(self, conn: Connection, name: str) -> PlayerInfo | None:
         r = await conn.fetchone("SELECT player FROM Names WHERE name = ?", (name,))
         return PlayerInfo(r[0], self.bot) if r else None
 
+    @needs_db
     async def fetch_players(self, conn: Connection) -> list[PlayerInfo]:
         return [PlayerInfo(player, self.bot) for player, in await conn.fetchall(f"SELECT DISTINCT player FROM Names")]
 
+    @needs_db
     async def fetch_discord_players(self, conn: Connection) -> list[PlayerInfo]:
         return [PlayerInfo(player, self.bot) for player, in await conn.fetchall(f"SELECT player FROM DiscordConnections ORDER BY player")]
 
     @commands.command()
-    @needs_db()
+    @needs_db
     async def info(self, conn: Connection, ctx: Context) -> None:
         """General information and statistics on stored games."""
         town_maj, coven_maj, town_hunt, coven_hunt = await conn.fetchone("""SELECT
@@ -248,7 +246,7 @@ class Stats(commands.Cog):
 
         await ctx.send(embed=embed)
 
-    @needs_db()
+    @needs_db
     async def winrate_in(self, conn: Connection, player: PlayerInfo, spec: IdentitySpecifier = IdentitySpecifier()) -> Winrate:
         c, p = spec.to_sql()
         s, n = await conn.fetchone(
@@ -258,12 +256,12 @@ class Stats(commands.Cog):
         return Winrate(s, n)
 
     @commands.command()
-    @needs_db()
+    @needs_db
     async def player(self, conn: Connection, ctx: Context, *, player: PlayerInfo) -> None:
         """Show information about a player."""
         embed = discord.Embed()
-        names = await player.names(conn)
-        user = await player.user(conn)
+        names = await player.names()
+        user = await player.user()
 
         r = None
         for name in names:
@@ -278,13 +276,13 @@ class Stats(commands.Cog):
         game_count = f"{overall.n:,} games" if overall.n != 1 else "1 game"
         embed.set_footer(text=f"Seen in {game_count}")
 
-        hidden = await player.hidden(conn)
+        hidden = await player.hidden()
         if hidden == "user":
             embed.description = f"### {title}\nThis player has chosen to hide their profile."
         elif hidden == "cheated":
             embed.description = f"### {title}\nThis player's profile is hidden because they were found to have played illegitimately."
         else:
-            rating = await player.rating(conn, self.now())
+            rating = await player.rating(self.now())
             rated = f"Rated {rating.ordinal():.0f} (#{await rating.rank():,})" if rating else "Not rated"
             embed.description = f"### {title}\n{rated}"
             embed.add_field(name="Winrates", value=textwrap.dedent(f"""
@@ -304,20 +302,20 @@ class Stats(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(aliases=["lb", "leaderboard", "players"])
-    @needs_db()
-    async def top(self, conn: Connection, ctx: Context, *, criterion: Criterion = RatingCriterion()) -> None:
+    @needs_db
+    async def top(self, conn: Connection, ctx: Context, *, criterion: Criterion = commands.param(default=lambda ctx: RatingCriterion(ctx.bot))) -> None:
         """Rank all players by a specified criterion.
 
         By default, `top` displays players sorted by their rating. Specifying an alignment or role, such as `town`, will sort by winrate instead.
         Prefix with the `played` keyword to count games played instead of winrate.
         """
         view = ContainerView(ctx.author, TopPaginator(self, criterion))
-        await view.container.start(conn)
+        await view.container.start()
         view.message = await ctx.send(view=view)
 
     @commands.command(name="is")
     @commands.is_owner()
-    @needs_db()
+    @needs_db
     async def is_(self, conn: Connection, ctx: Context, a: PlayerInfo, b: PlayerInfo) -> None:
         """Treat 2 players as being the same from now on in statistics."""
         if a.id == b.id:
@@ -327,7 +325,7 @@ class Stats(commands.Cog):
         conflicts = await conn.fetchall("SELECT game FROM Appearances AS A1 INNER JOIN Appearances AS A2 USING (game) WHERE A1.player = ? AND A2.player = ?", (a.id, b.id))
         if conflicts:
             logs = self.bot.require_cog(Gamelogs)
-            urls = [f"- {u}" for conflict, in conflicts if (u := await (await logs.fetch_log_with_gist(conn, conflict)).url())] if len(conflicts) <= 10 else []
+            urls = [f"- {u}" for conflict, in conflicts if (u := await (await logs.fetch_log_with_gist(conflict)).url())] if len(conflicts) <= 10 else []
             await ctx.send(f"Refusing to merge players who have appeared together in {len(conflicts)} games.\n{'\n'.join(urls)}")
             return
 
@@ -344,7 +342,7 @@ class Stats(commands.Cog):
         await self.run_games()
 
     @commands.command()
-    @needs_db()
+    @needs_db
     async def hide(self, conn: Connection, ctx: Context) -> None:
         """Hide the information the bot tracks about your gameplay."""
         r = await conn.fetchone("INSERT OR REPLACE INTO Hidden (player) SELECT player FROM DiscordConnections WHERE discord_id = ? RETURNING player", (ctx.author.id,))
@@ -354,7 +352,7 @@ class Stats(commands.Cog):
         await ctx.send(":+1:")
 
     @commands.command(aliases=["unhide"])
-    @needs_db()
+    @needs_db
     async def show(self, conn: Connection, ctx: Context) -> None:
         """Revert the effect of `hide`."""
         r = await conn.fetchone("SELECT player FROM DiscordConnections WHERE discord_id = ?", (ctx.author.id,))
@@ -366,7 +364,7 @@ class Stats(commands.Cog):
 
     @commands.command()
     @commands.is_owner()
-    @needs_db()
+    @needs_db
     async def cheated(self, conn: Connection, ctx: Context, player: PlayerInfo) -> None:
         """Mark a player as having cheated."""
         await conn.execute("INSERT OR REPLACE INTO Hidden (player, why) VALUES (?, 'cheated')", (player.id,))
@@ -374,7 +372,7 @@ class Stats(commands.Cog):
 
     @commands.command()
     @commands.is_owner()
-    @needs_db()
+    @needs_db
     async def uncheated(self, conn: Connection, ctx: Context, player: PlayerInfo) -> None:
         """Revert the effect of `cheated`."""
         await conn.execute("DELETE FROM Hidden WHERE player = ?", (player.id,))
@@ -382,7 +380,7 @@ class Stats(commands.Cog):
 
     @commands.command()
     @commands.check_any(commands.has_role("Game host"), commands.is_owner())
-    @needs_db()
+    @needs_db
     async def connect(self, conn: Connection, ctx: Context, who: discord.Member, *, player: PlayerInfo | str) -> None:
         """Associate a player with their Discord account."""
         if isinstance(player, PlayerInfo):
@@ -400,7 +398,7 @@ class Stats(commands.Cog):
 
     @commands.command()
     @commands.check_any(commands.has_role("Game host"), commands.is_owner())
-    @needs_db()
+    @needs_db
     async def unconnected(self, conn: Connection, ctx: Context, *, guild: discord.Guild = commands.CurrentGuild) -> None:
         """List Discord members not associated with a ToS2 username."""
         members = []
