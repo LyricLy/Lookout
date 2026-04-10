@@ -84,7 +84,7 @@ class ReglePanel(ViewContainer):
 
 class WillePanel(ViewContainer):
     display = discord.ui.Section("", accessory=discord.ui.Thumbnail(f"{config.base_url}/static/who_wins.png"))
-    sep = discord.ui.Separator(spacing=discord.SeparatorSpacing.large)
+    sep = discord.ui.Separator()
     will = discord.ui.TextDisplay("")
     sep2 = discord.ui.Separator(spacing=discord.SeparatorSpacing.large)
 
@@ -133,8 +133,12 @@ class WillePanel(ViewContainer):
         select.placeholder = f"You guessed {guess.global_name}"
         self.end(f"{header}\n{self.user.mention} ({self.player.account_name}) — {self.player.ending_ident}\n")
 
-        self.add_item(await log.to_item())
-        self._children.insert(self._children.index(self.sep), self._children.pop())
+        item = await log.to_item()
+        if isinstance(item, discord.ui.TextDisplay):
+            self.display.add_item(item)
+        else:
+            self.add_item(item)
+            self._children.insert(self._children.index(self.will), self._children.pop())
 
         async with self.bot.acquire() as conn:
             await conn.execute("INSERT INTO WilleGames (player_id, guessed, correct, gist) VALUES (?, ?, ?, ?)", (interaction.user.id, guessed, self.correct, gist_of(self.game)))
