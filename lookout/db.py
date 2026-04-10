@@ -166,7 +166,7 @@ def init(db: sqlite3.Connection):
     db.execute("PRAGMA synchronous = NORMAL")
 
 async def create_pool(path: str) -> asqlite.Pool:
-    db = await asqlite.create_pool(path, init=init, detect_types=asqlite.PARSE_DECLTYPES)
+    db = await asqlite.create_pool(path, init=init, timeout=30, detect_types=asqlite.PARSE_DECLTYPES)
 
     async with db.acquire() as conn:
         current_version, = await conn.fetchone("PRAGMA user_version")  # type: ignore

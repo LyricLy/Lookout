@@ -140,7 +140,7 @@ class Stats(commands.Cog):
 
             assert gist_of(game) == gist
             async with self.bot.acquire() as conn:
-                await conn.execute("UPDATE Games SET analysis = ?, message_count = ?, analysis_version = ?, victor = ? WHERE gist = ?", (game, message_count, gamelogs.version, gist, game.victor))
+                await conn.execute("UPDATE Games SET analysis = ?, message_count = ?, analysis_version = ?, victor = ? WHERE gist = ?", (game, message_count, gamelogs.version, game.victor, gist))
 
             if game.victor != old_victor:
                 victors_changed = True
@@ -150,32 +150,38 @@ class Stats(commands.Cog):
         if victors_changed:
             async with self.bot.acquire() as conn:
                 await conn.execute("UPDATE Globals SET generation = generation + 1")
-            await self.run_games()
+            asyncio.create_task(self.run_games())
 
-    async def games(self, injection: str = "", params: Sequence[object] | dict[str, Any] = ()) -> list[gamelogs.GameResult]:
+    async def games(self, injection: str = "", params: Sequence[object] | dict[str, Any] = (), *, current: bool = False) -> list[gamelogs.GameResult]:
         async with self.bot.acquire() as conn:
             games = await conn.fetchall(f"SELECT gist, analysis, analysis_version, from_log, victor FROM Games {injection}", params)
+
         r = []
         to_update = []
         for gist, game, version, from_log, victor in games:
             if version < gamelogs.version:
                 to_update.append((gist, from_log, victor))
             r.append(game)
+
         if to_update:
+            update = self.update_games(to_update)
+            if current:
+                await update
+                return await self.games(injection, params, current=True)
             asyncio.create_task(self.update_games(to_update), context=contextvars.Context())
+
         return r
 
     @needs_db
     async def run_game(self, conn: Connection, game: gamelogs.GameResult):
-        log = await self.bot.require_cog(Gamelogs).fetch_log(game)
         gist = gist_of(game)
-
         await conn.execute("DELETE FROM Appearances WHERE game = ?", (gist,))
+        log = await self.bot.require_cog(Gamelogs).fetch_log(game)
 
         teams: list[list[tuple[gamelogs.Player, PlayerInfo]]] = [[], []]
         ratings: list[list[PlackettLuceRating]] = [[], []]
         for player in game.players:
-            info: PlayerInfo = await self.fetch_player_by_name(player.account_name)  # type: ignore
+            info: PlayerInfo = await PlayerInfo.by_name(conn, player.account_name, self.bot)  # type: ignore
             i = player.ending_ident.faction == gamelogs.coven
             teams[i].append((player, info))
             rating = await info.rating(log.first_upload, this_gen=True)
@@ -185,7 +191,7 @@ class Stats(commands.Cog):
         avg = sum([r.mu for r in ratings[1]]) / len(ratings[1])
         ratings[1].extend([model.rating(mu=avg, sigma=avg/3) for _ in range(len(ratings[0]) - len(ratings[1]))])
 
-        new_ratings = model.rate(ratings, ranks=[1, 2] if game.victor == gamelogs.town else [2, 1])
+        new_ratings = model.rate(ratings, ranks=[1, 2] if game.victor == gamelogs.town else [2, 1] if game.victor == gamelogs.coven else [1, 1])
         for team, team_ratings in zip(teams, new_ratings):
             for (player, info), new_rating in zip(team, team_ratings):
                 await conn.execute("""
@@ -204,7 +210,7 @@ class Stats(commands.Cog):
             async with self.catchup:
                 log.info("resolving appearances")
                 c = 0
-                for game in await self.games("INNER JOIN Gamelogs ON hash = first_log, Globals WHERE Games.generation < Globals.generation ORDER BY timecode"):
+                for game in await self.games("INNER JOIN Gamelogs ON hash = first_log, Globals WHERE Games.generation < Globals.generation ORDER BY timecode", current=True):
                     await self.run_game(game)
                     c += 1
                 log.info("resolved appearances from %d games", c)
@@ -223,22 +229,6 @@ class Stats(commands.Cog):
 
     def now(self) -> Timecode:
         return Timecode.from_datetime(self.prev_update())
-
-    def fetch_player(self, player: int) -> PlayerInfo:
-        return PlayerInfo(player, self.bot)
-
-    @needs_db
-    async def fetch_player_by_name(self, conn: Connection, name: str) -> PlayerInfo | None:
-        r = await conn.fetchone("SELECT player FROM Names WHERE name = ?", (name,))
-        return PlayerInfo(r[0], self.bot) if r else None
-
-    @needs_db
-    async def fetch_players(self, conn: Connection) -> list[PlayerInfo]:
-        return [PlayerInfo(player, self.bot) for player, in await conn.fetchall(f"SELECT DISTINCT player FROM Names")]
-
-    @needs_db
-    async def fetch_discord_players(self, conn: Connection) -> list[PlayerInfo]:
-        return [PlayerInfo(player, self.bot) for player, in await conn.fetchall(f"SELECT player FROM DiscordConnections ORDER BY player")]
 
     @commands.command()
     @needs_db
