@@ -88,12 +88,12 @@ class WillePanel(ViewContainer):
     will = discord.ui.TextDisplay("")
     sep2 = discord.ui.Separator(spacing=discord.SeparatorSpacing.large)
 
-    def __init__(self, bot: Lookout, game: gamelogs.GameResult, player: gamelogs.Player, user: discord.User, correct: int) -> None:
+    def __init__(self, bot: Lookout, game: gamelogs.GameResult, player: gamelogs.Player, member: discord.Member, correct: int) -> None:
         super().__init__(accent_colour=discord.Colour(0xdaa36f))
         self.bot = bot
         self.game = game
         self.player = player
-        self.user = user
+        self.member = member
         self.correct = correct
         self.draw("Whose will is this?")
 
@@ -126,12 +126,12 @@ class WillePanel(ViewContainer):
 
         log = await self.bot.require_cog(Gamelogs).fetch_log(self.game)
 
-        self.display.accessory.media = self.user.display_avatar.url  # type: ignore
+        self.display.accessory.media = self.member.display_avatar.url  # type: ignore
 
         correct = guessed == self.correct
         header = "Will done!" if correct else "Unlucky..."
         select.placeholder = f"You guessed {guess.global_name}"
-        self.end(f"{header}\n{self.user.mention} ({self.player.account_name}) — {self.player.ending_ident}\n")
+        self.end(f"{header}\n{self.member.mention} ({self.player.account_name}) — {self.player.ending_ident}\n")
 
         item = await log.to_item()
         if isinstance(item, discord.ui.TextDisplay):
@@ -176,9 +176,10 @@ class Gaming(commands.Cog):
         """With only a will, guess who wrote it."""
         players = await conn.fetchall("SELECT player, discord_id FROM DiscordConnections WHERE (SELECT COUNT(*) >= 50 FROM Appearances WHERE player = DiscordConnections.player)")
 
+        assert ctx.guild
         while True:
             player_id, discord_id = random.choice(players)
-            if user := self.bot.get_user(discord_id):
+            if member := ctx.guild.get_member(discord_id):
                 break
 
         while True:
@@ -194,7 +195,7 @@ class Gaming(commands.Cog):
             if player.will and (not player.died or player.died >= gamelogs.DayTime(2, gamelogs.Time.NIGHT)):
                 break
 
-        view = ContainerView(ctx.author, WillePanel(self.bot, game, player, user, player_id))
+        view = ContainerView(ctx.author, WillePanel(self.bot, game, player, member, player_id))
         view.message = await ctx.send(view=view)
 
 
