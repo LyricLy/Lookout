@@ -159,11 +159,17 @@ class Gamelogs(commands.Cog):
 
             digest = hashlib.sha256(clean_content.encode()).hexdigest()
             filename_time = datetime_of_filename(attach.filename)
+            exhibition = "!exhibition" in message.content
             async with self.bot.acquire() as conn:
                 await conn.execute(
                     "INSERT OR IGNORE INTO Gamelogs (hash, filename, channel_id, message_id, attachment_id, filename_time, uploader, clean_content) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (digest, attach.filename, message.channel.id, message.id, attach.id, filename_time, message.author.id, clean_content),
                 )
+                # separate in case the log was already there
+                if not exhibition:
+                    await conn.execute("UPDATE Gamelogs SET qualified = 1 WHERE hash = ?", (digest,))
+                else:
+                    continue
 
             if not filename_time:
                 tears.append((attach, "Filename does not contain date and time"))

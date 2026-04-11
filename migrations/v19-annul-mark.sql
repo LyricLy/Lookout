@@ -1,0 +1,2 @@
+ALTER TABLE Gamelogs ADD COLUMN qualified INTEGER NOT NULL DEFAULT 0;
+UPDATE Gamelogs SET qualified = 1;
