@@ -24,7 +24,10 @@ class PlayerRating:
 
     @needs_db
     async def rank(self, conn: Connection) -> int:
-        rank, = await conn.fetchone(f"SELECT 1 + COUNT(*) FROM {RATINGS} WHERE mu - 3.0 * sigma > ?", (self.at, self.rating.ordinal()))
+        rank, = await conn.fetchone(
+            f"SELECT 1 + COUNT(*) FROM {RATINGS} WHERE mu - 3.0 * sigma > ? AND NOT EXISTS(SELECT 1 FROM Hidden WHERE player = Ratings.player)",
+            (self.at, self.rating.ordinal()),
+        )
         return rank
 
 
