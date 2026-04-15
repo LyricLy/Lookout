@@ -208,7 +208,7 @@ class SearchQuery(commands.FlagConverter, case_insensitive=True):
     before: DateRange | None = None
     during: DateRange | None = None
     after: DateRange | None = None
-    victor: Literal["town", "coven"] | None = commands.flag(aliases=["winner", "won"], default=None)
+    victor: Literal["town", "coven", "draw"] | None = commands.flag(aliases=["winner", "won"], default=None)
     hunt: bool | None = None
     team: tuple[PlayerInfo, ...] = ()
     count: list[tuple[int, str]] = []
@@ -231,8 +231,11 @@ class SearchQuery(commands.FlagConverter, case_insensitive=True):
             p["after"] = self.after.stop_id
 
         if self.victor:
-            where.append(f"victor = :victor")
-            p["victor"] = self.victor
+            if self.victor == "draw":
+                where.append("victor IS NULL")
+            else:
+                where.append(f"victor = :victor")
+                p["victor"] = self.victor
 
         if self.hunt is not None:
             where.append(f"hunt_reached = :hunt")

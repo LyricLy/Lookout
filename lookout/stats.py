@@ -168,7 +168,7 @@ class Stats(commands.Cog):
             if current:
                 await update
                 return await self.games(injection, params, current=True)
-            asyncio.create_task(self.update_games(to_update), context=contextvars.Context())
+            asyncio.create_task(update, context=contextvars.Context())
 
         return r
 
