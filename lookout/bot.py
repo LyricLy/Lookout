@@ -24,6 +24,7 @@ extensions = [
     "..stats",
     "..search",
     "..gaming",
+    "..admin",
 ]
 
 

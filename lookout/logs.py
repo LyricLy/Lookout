@@ -207,21 +207,6 @@ class Gamelogs(commands.Cog):
         if tears:
             await message.channel.send("\n".join(f"- {attach}: {tear}" for attach, tear in tears))
 
-    @commands.command()
-    @commands.is_owner()
-    @needs_db
-    async def gamedump(self, conn: Connection, ctx: Context) -> None:
-        """Dump logs from the database into a folder."""
-        cache = {}
-        for filename, content, uploader in await conn.fetchall("SELECT filename, clean_content, uploader FROM Gamelogs"):
-            if uploader in cache:
-                name = cache[uploader]
-            else:
-                name = (self.bot.get_user(uploader) or await self.bot.fetch_user(uploader)).name
-                cache[uploader] = name
-            with open(f"log_area/{name}-{filename}", "w") as f:
-                f.write(content)
-
 
 async def setup(bot: Lookout):
     await bot.add_cog(Gamelogs(bot))

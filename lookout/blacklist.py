@@ -1,6 +1,5 @@
 import asyncio
 import re
-import io
 
 import discord
 import gamelogs
@@ -108,23 +107,6 @@ class Blacklist(commands.Cog):
 
         if await self.check_for_logs(message):
             await message.channel.remove_tags(discord.Object(id=config.no_logs_tag))
-
-    @commands.command()
-    @commands.is_owner()
-    @needs_db
-    async def bldump(self, conn: Connection, ctx: Context, target: discord.ForumChannel) -> None:
-        """Write the blacklist to a target forum channel."""
-        if target.id == config.channel_id:
-            await ctx.send("It's not a good idea to dump into the current blacklist channel.")
-            return
-
-        for thread, reason in await conn.fetchall("SELECT DISTINCT thread_id, reason FROM Blacklists"):
-            names = [x for x, in await conn.fetchall("SELECT account_name FROM Blacklists WHERE thread_id = ?", (thread,))]
-            files = await conn.fetchall(
-                "SELECT filename, clean_content FROM BlacklistGames INNER JOIN Gamelogs ON hash = from_log INNER JOIN Games ON BlacklistGames.gist = Games.gist WHERE thread_id = ?",
-                (thread,),
-            )
-            await target.create_thread(name=", ".join(names), content=reason, files=[discord.File(io.BytesIO(content.encode()), filename=filename) for filename, content in files])
 
 
 async def setup(bot: Lookout):

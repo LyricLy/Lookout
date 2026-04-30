@@ -17,7 +17,7 @@ from .criteria import Criterion, RatingCriterion, DisplayablePlayer, Key
 from .logs import gist_of, Timecode, Gamelogs
 from .player_info import PlayerInfo, model
 from .specifiers import IdentitySpecifier
-from .views import ViewContainer, ContainerView, ConfirmationView
+from .views import ViewContainer, ContainerView
 from .winrate import Winrate
 
 
@@ -120,10 +120,7 @@ class Stats(commands.Cog):
         self.catchup = asyncio.Lock()
 
     async def cog_load(self) -> None:
-        self.catchup_task = asyncio.create_task(self.run_games())
-
-    async def cog_unload(self) -> None:
-        self.catchup_task.cancel()
+        self.run_games()
 
     async def update_games(self, games: list[tuple[str, str, gamelogs.Faction]]) -> None:
         victors_changed = False
@@ -150,7 +147,7 @@ class Stats(commands.Cog):
         if victors_changed:
             async with self.bot.acquire() as conn:
                 await conn.execute("UPDATE Globals SET generation = generation + 1")
-            asyncio.create_task(self.run_games())
+            self.run_games()
 
     async def games(self, injection: str = "", params: Sequence[object] | dict[str, Any] = (), *, current: bool = False) -> list[gamelogs.GameResult]:
         async with self.bot.acquire() as conn:
@@ -205,7 +202,7 @@ class Stats(commands.Cog):
 
         await conn.execute("UPDATE Games SET generation = Globals.generation FROM Globals WHERE gist = ?", (gist,))
 
-    async def run_games(self):
+    async def _run_games(self):
         try:
             async with self.catchup:
                 log.info("resolving appearances")
@@ -217,9 +214,12 @@ class Stats(commands.Cog):
         except Exception:
             log.exception("error running games")
 
+    def run_games(self):
+        asyncio.create_task(self._run_games(), context=contextvars.Context())
+
     @commands.Cog.listener()
     async def on_saw_games(self):
-        await self.run_games()
+        self.run_games()
 
     def prev_update(self) -> datetime.datetime:
         return config.prev_update(datetime.datetime.now(datetime.timezone.utc))
@@ -325,34 +325,6 @@ class Stats(commands.Cog):
         await view.container.start()
         view.message = await ctx.send(view=view)
 
-    @commands.command(name="is")
-    @commands.is_owner()
-    @needs_db
-    async def is_(self, conn: Connection, ctx: Context, a: PlayerInfo, b: PlayerInfo) -> None:
-        """Treat 2 players as being the same from now on in statistics."""
-        if a.id == b.id:
-            await ctx.send("I know.")
-            return
-
-        conflicts = await conn.fetchall("SELECT game FROM Appearances AS A1 INNER JOIN Appearances AS A2 USING (game) WHERE A1.player = ? AND A2.player = ?", (a.id, b.id))
-        if conflicts:
-            logs = self.bot.require_cog(Gamelogs)
-            urls = [f"- {u}" for conflict, in conflicts if (u := await (await logs.fetch_log_with_gist(conflict)).url())] if len(conflicts) <= 10 else []
-            await ctx.send(f"Refusing to merge players who have appeared together in {len(conflicts)} games.\n{'\n'.join(urls)}")
-            return
-
-        timecode, = await conn.fetchone("SELECT MIN(timecode) FROM Appearances WHERE player = ?", (b.id,))
-        if timecode:
-            await conn.execute("UPDATE Globals SET generation = generation + 1")
-            await conn.execute("UPDATE Games SET generation = generation + 1 FROM Gamelogs WHERE first_log = hash AND timecode < ?", (timecode,))
-
-        await conn.execute("UPDATE OR IGNORE DiscordConnections SET player = ? WHERE player = ?", (a.id, b.id))
-        await conn.execute("UPDATE Names SET player = ? WHERE player = ?", (a.id, b.id))
-        await conn.execute("DELETE FROM Appearances WHERE player = ?", (b.id,))
-        await ctx.send(":+1:")
-
-        await self.run_games()
-
     @commands.command()
     @needs_db
     async def hide(self, conn: Connection, ctx: Context) -> None:
@@ -373,54 +345,6 @@ class Stats(commands.Cog):
             return
         await conn.execute("DELETE FROM Hidden WHERE player = ?", (r[0],))
         await ctx.send(":+1:")
-
-    @commands.command()
-    @commands.is_owner()
-    @needs_db
-    async def cheated(self, conn: Connection, ctx: Context, player: PlayerInfo) -> None:
-        """Mark a player as having cheated."""
-        await conn.execute("INSERT OR REPLACE INTO Hidden (player, why) VALUES (?, 'cheated')", (player.id,))
-        await ctx.send(":+1:")
-
-    @commands.command()
-    @commands.is_owner()
-    @needs_db
-    async def uncheated(self, conn: Connection, ctx: Context, player: PlayerInfo) -> None:
-        """Revert the effect of `cheated`."""
-        await conn.execute("DELETE FROM Hidden WHERE player = ?", (player.id,))
-        await ctx.send(":+1:")
-
-    @commands.command()
-    @commands.check_any(commands.has_role("Game host"), commands.is_owner())
-    @needs_db
-    async def connect(self, conn: Connection, ctx: Context, who: discord.Member, *, player: PlayerInfo | str) -> None:
-        """Associate a player with their Discord account."""
-        if isinstance(player, PlayerInfo):
-            player_id = player.id
-        else:
-            view = ConfirmationView(ctx.author)
-            view.message = await ctx.send(f"I don't know who that is. Really connect to '{player}'?", view=view)
-            if not await view.wait():
-                return
-
-            player_id, = await conn.fetchone("INSERT INTO Names VALUES (?, (SELECT COALESCE(MAX(player), 0) + 1 FROM Names)) RETURNING player", (player,))
-
-        await conn.execute("INSERT OR REPLACE INTO DiscordConnections (discord_id, player) VALUES (?, ?)", (who.id, player_id))
-        await ctx.send(":+1:")
-
-    @commands.command()
-    @commands.check_any(commands.has_role("Game host"), commands.is_owner())
-    @needs_db
-    async def unconnected(self, conn: Connection, ctx: Context, *, guild: discord.Guild = commands.CurrentGuild) -> None:
-        """List Discord members not associated with a ToS2 username."""
-        members = []
-        for member in guild.members:
-            if member.bot:
-                continue
-            exists = await conn.fetchone("SELECT 1 FROM DiscordConnections WHERE discord_id = ?", (member.id,))
-            if not exists:
-                members.append(member)
-        await ctx.send("\n".join(f"- {member.mention}" for member in members))
 
 
 async def setup(bot: Lookout):
