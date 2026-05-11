@@ -21,6 +21,10 @@ class ViewContainer(discord.ui.Container["ContainerView"]):
             item._update_view(None)
         return super().remove_item(item)
 
+    @property
+    def view(self) -> ContainerView[Self]:
+        return super().view  # type: ignore
+
     def send_args(self) -> dict:
         assert self.view
         return self.view.send_args()

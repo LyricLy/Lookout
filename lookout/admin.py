@@ -48,6 +48,7 @@ class ViewGamePanel(ViewContainer):
 
     @annul_row.button(label="Annul", emoji=config.annul_emoji, style=discord.ButtonStyle.danger)
     async def annul(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await interaction.response.defer()
         async with self.bot.acquire() as conn:
             await conn.execute("DELETE FROM WilleGames WHERE gist = ?", (self.gist,))
             await conn.execute("DELETE FROM RegleGames WHERE gist = ?", (self.gist,))
@@ -58,7 +59,7 @@ class ViewGamePanel(ViewContainer):
 
         self.tooltip.content = "Game annulled. Effects on ratings will take some time to be reflected."
         button.disabled = True
-        await interaction.response.edit_message(**self.edit_args())
+        await self.view.message.edit(**self.edit_args())
 
     async def destroy(self) -> None:
         self.annul.disabled = True
