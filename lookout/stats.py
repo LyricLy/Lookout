@@ -4,7 +4,6 @@ import datetime
 import math
 import logging
 import textwrap
-from typing import AsyncIterator, Sequence, Any
 
 import discord
 import gamelogs
@@ -17,7 +16,7 @@ from .criteria import Criterion, RatingCriterion, DisplayablePlayer, Key
 from .logs import gist_of, Timecode, Gamelogs
 from .player_info import PlayerInfo, model
 from .specifiers import IdentitySpecifier
-from .views import ViewContainer, ContainerView
+from .views import ViewContainer
 from .winrate import Winrate
 
 
@@ -56,14 +55,14 @@ class Jump(discord.ui.Modal):
 class TopPaginator[K: Key](ViewContainer):
     display = discord.ui.TextDisplay("")
 
-    def __init__(self, stats: Stats, crit: Criterion[K]) -> None:
+    def __init__(self, crit: Criterion[K], at: Timecode) -> None:
         super().__init__(accent_colour=discord.Colour(0xfce703))
-        self.stats = stats
+        self.at = at
         self.crit: Criterion = crit
         self.per_page = 15
 
     async def start(self) -> None:
-        self.players = sorted(await self.crit.decorate_players(self.stats.now()), key=lambda p: p[1], reverse=True)
+        self.players = sorted(await self.crit.decorate_players(self.at), key=lambda p: p[1], reverse=True)
         self.go_to_page(0)
         await self.draw()
 
@@ -149,7 +148,7 @@ class Stats(commands.Cog):
                 await conn.execute("UPDATE Globals SET generation = generation + 1")
             self.run_games()
 
-    async def games(self, injection: str = "", params: Sequence[object] | dict[str, Any] = (), *, current: bool = False) -> list[gamelogs.GameResult]:
+    async def games(self, injection: str = "", params: SqlParams = (), *, current: bool = False) -> list[gamelogs.GameResult]:
         async with self.bot.acquire() as conn:
             games = await conn.fetchall(f"SELECT gist, analysis, analysis_version, from_log, victor FROM Games {injection}", params)
 
@@ -321,9 +320,7 @@ class Stats(commands.Cog):
         By default, `top` displays players sorted by their rating. Specifying an alignment or role, such as `town`, will sort by winrate instead.
         Prefix with the `played` keyword to count games played instead of winrate.
         """
-        view = ContainerView(ctx.author, TopPaginator(self, criterion))
-        await view.container.start()
-        view.message = await ctx.send(view=view)
+        await ctx.send_container_view(TopPaginator(criterion, self.now()))
 
     @commands.command()
     @needs_db

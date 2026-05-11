@@ -16,7 +16,7 @@ from .bot import *
 from .logs import Gamelogs, gist_of
 from .specifiers import IdentitySpecifier, PlayerSpecifier, BUCKETS
 from .stats import Stats, PlayerInfo
-from .views import ViewContainer, ContainerView
+from .views import ViewContainer
 
 
 RE_OPTIONS = re2.Options()
@@ -102,6 +102,9 @@ class SearchResults(ViewContainer):
     def has_page(self, num: int) -> bool:
         return 0 <= num < len(self.results)
 
+    async def start(self) -> None:
+        await self.draw()
+
     @needs_db
     async def draw(self, conn: Connection, *, obscure: bool = False) -> None:
         game = self.results[self.page]
@@ -163,11 +166,9 @@ class SearchResults(ViewContainer):
             rollout.append(f"{death} - [{player.number}] {obsc(player.game_name)} ({obsc(player.account_name)}{mark}) - {bold}{role}{bold}")
 
         if self.file:
-            self.file._update_view(None)  # the library doesn't do this...?
             self.remove_item(self.file)
         self.file = await log.to_item()
-        self.add_item(self.file)
-        self._children.insert(self._children.index(self.sep), self._children.pop())
+        self.insert_item_before(self.file, self.sep)
 
         self.display.children[0].content = f"Uploaded {log.format_upload_time()}\n{outcome}\n{'\n'.join(rollout)}{bl_section}"  # type: ignore
         self.display.accessory.media = f"{config.base_url}/static/{thumbnail}"  # type: ignore
@@ -362,9 +363,7 @@ class Search(commands.Cog):
         if not results:
             await ctx.send("No results.")
             return
-        view = ContainerView(ctx.author, SearchResults(self.bot, results))
-        await view.container.draw()
-        view.message = await ctx.send(**view.send_args())
+        await ctx.send_container_view(SearchResults(self.bot, results))
 
 
 async def setup(bot: Lookout):

@@ -4,12 +4,64 @@ import discord
 from discord.ext import commands
 
 from .bot import *
+from .db import ser_game_result
 from .player_info import PlayerInfo
-from .logs import Gamelogs
+from .logs import Gamelogs, Timecode
 from .stats import Stats
-from .views import ConfirmationView
+from .views import ConfirmationView, ViewContainer, File
 
 import config
+
+
+class ViewGamePanel(ViewContainer):
+    header = discord.ui.TextDisplay("## Game data")
+    display = discord.ui.TextDisplay("")
+    sep = discord.ui.Separator()
+    management_header = discord.ui.TextDisplay("## Management")
+    tooltip = discord.ui.TextDisplay(
+        "As a game host, you can declare the result of this game null and void. It will no longer affect ratings or statistics, be viewable by searching, or appear in Regle, Wille, or Logle."
+    )
+    annul_row = discord.ui.ActionRow()
+
+    def __init__(self, admin: Admin, gist: str, filename: str, content: str, timecode: Timecode) -> None:
+        super().__init__(accent_colour=discord.Colour(0x481052))
+        self.bot = admin.bot
+        self.admin = admin
+        self.gist = gist
+        self.filename = filename
+        self.content = content
+        self.timecode = timecode
+
+    @needs_db
+    async def add_section(self, conn: Connection, title: str, query: str, params: SqlParams) -> None:
+        async with conn.execute(query, params) as cur:
+            columns = [t[0] for t in cur.get_cursor().description]
+            rows = await cur.fetchall()
+        content = "\n".join("|".join(map(str, row)) for row in [columns, *rows])
+        self.display.content += f"### {title}\n```{content}```\n"
+
+    async def start(self) -> None:
+        await self.add_section("Logs", "SELECT hash, filename, channel_id, message_id, attachment_id, filename_time, uploader, timecode, qualified FROM Gamelogs WHERE game = ?", (self.gist,))
+        await self.add_section("Game", "SELECT from_log, first_log, message_count, analysis_version, victor, hunt_reached, generation FROM Games WHERE gist = ?", (self.gist,))
+        await self.add_section("Appearances", "SELECT player, starting_role, ending_role, faction, account_name, game_name, won, saw_hunt FROM Appearances WHERE game = ?", (self.gist,))
+        self.insert_item_before(File(discord.File(io.BytesIO(self.content.encode()), filename=self.filename)), self.display)
+
+    @annul_row.button(label="Annul", emoji=config.annul_emoji, style=discord.ButtonStyle.danger)
+    async def annul(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        async with self.bot.acquire() as conn:
+            await conn.execute("DELETE FROM WilleGames WHERE gist = ?", (self.gist,))
+            await conn.execute("DELETE FROM RegleGames WHERE gist = ?", (self.gist,))
+            await conn.execute("DELETE FROM Appearances WHERE game = ?", (self.gist,))
+            await conn.execute("UPDATE Gamelogs SET game = NULL, qualified = 0 WHERE game = ?", (self.gist,))
+            await conn.execute("DELETE FROM Games WHERE gist = ?", (self.gist,))
+        await self.admin.rerun_after(self.timecode)
+
+        self.tooltip.content = "Game annulled. Effects on ratings will take some time to be reflected."
+        button.disabled = True
+        await interaction.response.edit_message(**self.edit_args())
+
+    async def destroy(self) -> None:
+        self.annul.disabled = True
 
 
 class Admin(commands.Cog):
@@ -67,32 +119,36 @@ class Admin(commands.Cog):
             )
             await target.create_thread(name=", ".join(names), content=reason, files=[discord.File(io.BytesIO(content.encode()), filename=filename) for filename, content in files])
 
-    @commands.command(name="is")
-    @commands.is_owner()
-    @needs_db
-    async def is_(self, conn: Connection, ctx: Context, a: PlayerInfo, b: PlayerInfo) -> None:
-        """Treat 2 players as being the same from now on in statistics."""
-        if a.id == b.id:
-            await ctx.send("I know.")
-            return
-
-        conflicts = await conn.fetchall("SELECT game FROM Appearances AS A1 INNER JOIN Appearances AS A2 USING (game) WHERE A1.player = ? AND A2.player = ?", (a.id, b.id))
-        if conflicts:
-            urls = [f"- {u}" for conflict, in conflicts if (u := await (await self.logs.fetch_log_with_gist(conflict)).url())] if len(conflicts) <= 10 else []
-            await ctx.send(f"Refusing to merge players who have appeared together in {len(conflicts)} games.\n{'\n'.join(urls)}")
-            return
-
-        timecode, = await conn.fetchone("SELECT MIN(timecode) FROM Appearances WHERE player = ?", (b.id,))
-        if timecode:
+    async def rerun_after(self, timecode: Timecode) -> None:
+        async with self.bot.acquire(assert_new=True) as conn:
             await conn.execute("UPDATE Globals SET generation = generation + 1")
             await conn.execute("UPDATE Games SET generation = generation + 1 FROM Gamelogs WHERE first_log = hash AND timecode < ?", (timecode,))
-
-        await conn.execute("UPDATE OR IGNORE DiscordConnections SET player = ? WHERE player = ?", (a.id, b.id))
-        await conn.execute("UPDATE Names SET player = ? WHERE player = ?", (a.id, b.id))
-        await conn.execute("DELETE FROM Appearances WHERE player = ?", (b.id,))
-        await ctx.send(":+1:")
-
         self.stats.run_games()
+
+    @commands.command(name="is")
+    @commands.is_owner()
+    async def is_(self, ctx: Context, a: PlayerInfo, b: PlayerInfo) -> None:
+        """Treat 2 players as being the same from now on in statistics."""
+        async with self.bot.acquire() as conn:
+            if a.id == b.id:
+                await ctx.send("I know.")
+                return
+
+            conflicts = await conn.fetchall("SELECT game FROM Appearances AS A1 INNER JOIN Appearances AS A2 USING (game) WHERE A1.player = ? AND A2.player = ?", (a.id, b.id))
+            if conflicts:
+                urls = [f"- {u}" for conflict, in conflicts if (u := await (await self.logs.fetch_log_with_gist(conflict)).url())] if len(conflicts) <= 10 else []
+                await ctx.send(f"Refusing to merge players who have appeared together in {len(conflicts)} games.\n{'\n'.join(urls)}")
+                return
+
+            timecode, = await conn.fetchone("SELECT MIN(timecode) FROM Appearances WHERE player = ?", (b.id,))
+
+            await conn.execute("UPDATE OR IGNORE DiscordConnections SET player = ? WHERE player = ?", (a.id, b.id))
+            await conn.execute("UPDATE Names SET player = ? WHERE player = ?", (a.id, b.id))
+            await conn.execute("DELETE FROM Appearances WHERE player = ?", (b.id,))
+
+        await ctx.send(":+1:")
+        if timecode:
+            await self.rerun_after(timecode)
 
     @commands.command()
     @needs_db
@@ -137,6 +193,20 @@ class Admin(commands.Cog):
             if not exists:
                 members.append(member)
         await ctx.send("\n".join(f"- {member.mention}" for member in members))
+
+    @commands.command(name="viewgame")
+    @needs_db
+    async def view_game(self, conn: Connection, ctx: Context, *, filename: str) -> None:
+        """See the internal data of a game, giving you the option to annul it."""
+        gist = await conn.fetchone("SELECT game, filename, clean_content, timecode FROM Gamelogs WHERE filename = ?", (filename,))
+        if not gist:
+            await ctx.send("I don't have a log by that name.")
+            return
+        if not gist[0]:
+            await ctx.send("That log doesn't correspond to a game. It may be invalid or marked as exhibition, or it may have been annulled.")
+            return
+
+        await ctx.send_container_view(ViewGamePanel(self, *gist))
 
 
 async def setup(bot: Lookout):

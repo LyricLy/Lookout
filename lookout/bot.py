@@ -3,16 +3,17 @@ import logging
 import time
 from contextvars import ContextVar
 from types import CoroutineType, TracebackType
-from typing import Any, Callable, Concatenate, Protocol, Awaitable
+from typing import Any, Callable, Concatenate, Protocol, Awaitable, Sequence
 
 import asqlite
 import discord
 from discord.ext import commands
 
 from . import db
+from .views import ContainerView, ViewContainer
 
 
-__all__ = ["Connection", "needs_db", "Lookout", "Context"]
+__all__ = ["Connection", "needs_db", "Lookout", "Context", "SqlParams"]
 
 log = logging.getLogger(__name__)
 
@@ -29,6 +30,7 @@ extensions = [
 
 
 type Connection = asqlite.ProxiedConnection
+type SqlParams = Sequence[object] | dict[str, Any]
 
 
 class HasBot(Protocol):
@@ -50,9 +52,10 @@ def needs_db[T: HasBot, **P, R](f: Callable[Concatenate[T, Connection, P], Await
 current_connection: ContextVar[Connection] = ContextVar("current_connection")
 
 class Acquisition:
-    def __init__(self, pool: asqlite.Pool) -> None:
+    def __init__(self, pool: asqlite.Pool, assert_new: bool) -> None:
         self.pool = pool
         self.token = None
+        self.assert_new = assert_new
 
     async def __aenter__(self) -> Connection:
         conn = current_connection.get(None)
@@ -60,6 +63,8 @@ class Acquisition:
             conn = await self.pool.acquire()
             self.token = current_connection.set(conn)
             self.start = time.perf_counter()
+        if self.assert_new and conn.get_connection().in_transaction:
+            raise RuntimeError("wanted clean connection but a transaction is open")
         self.conn = conn
         self.save = db.rand_ident()
         await conn.execute(f"SAVEPOINT {self.save}")
@@ -76,7 +81,12 @@ class Acquisition:
             await self.conn.close()
 
 
-type Context = commands.Context[Lookout]
+class Context(commands.Context["Lookout"]):
+    async def send_container_view(self, container: ViewContainer) -> None:
+        view = ContainerView(self.author, container)
+        await container.start()
+        view.message = await self.send(**view.send_args())
+
 
 class Lookout(commands.Bot):
     def __init__(self) -> None:
@@ -105,6 +115,10 @@ class Lookout(commands.Bot):
             return True
         return await super().is_owner(user)
 
+    async def on_message(self, message: discord.Message) -> None:
+        ctx = await self.get_context(message, cls=Context)
+        await self.invoke(ctx)
+
     async def on_command_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
         if isinstance(error, (commands.CommandInvokeError, commands.ConversionError)):
             assert ctx.command is not None
@@ -117,8 +131,8 @@ class Lookout(commands.Bot):
         elif isinstance(error, commands.UserInputError):
             await ctx.send(str(error))
 
-    def acquire(self) -> Acquisition:
-        return Acquisition(self.pool)
+    def acquire(self, *, assert_new = False) -> Acquisition:
+        return Acquisition(self.pool, assert_new)
 
     async def setup_hook(self) -> None:
         self.pool = await db.create_pool("the.db")

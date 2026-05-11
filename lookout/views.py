@@ -1,9 +1,26 @@
 import asyncio
+from typing import Self
 
 import discord
 
 
 class ViewContainer(discord.ui.Container["ContainerView"]):
+    async def start(self) -> None:
+        pass
+
+    def insert_item(self, index: int, item: discord.ui.Item) -> Self:
+        self.add_item(item)
+        self._children.insert(index, self._children.pop())
+        return self
+
+    def insert_item_before(self, item: discord.ui.Item, before: discord.ui.Item) -> Self:
+        return self.insert_item(self._children.index(before), item)
+
+    def remove_item(self, item: discord.ui.Item) -> Self:
+        if item in self._children:
+            item._update_view(None)
+        return super().remove_item(item)
+
     def send_args(self) -> dict:
         assert self.view
         return self.view.send_args()
@@ -48,14 +65,17 @@ class ContainerView[T: ViewContainer](discord.ui.LayoutView):
         self.add_item(container)
 
     def send_args(self) -> dict:
-        return {"view": self, "files": self.files}
+        return {"view": self, "files": self.files()}
 
     def edit_args(self) -> dict:
-        return {"view": self, "attachments": self.files}
+        return {"view": self, "attachments": self.files()}
 
-    @property
     def files(self) -> list[discord.File]:
-        return [x.file for x in self._files]
+        r = []
+        for f in self._files:
+            f.file.fp.seek(0)
+            r.append(f.file)
+        return r
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user != self.owner:
@@ -74,10 +94,10 @@ class ConfirmationView(discord.ui.View):
     def __init__(self, owner: discord.abc.User) -> None:
         super().__init__(timeout=30)
         self.owner = owner
-        self.event = asyncio.Event()
+        self.future = asyncio.get_event_loop().create_future()
 
-    def wait(self):
-        return self.event.wait()
+    async def wait(self):
+        return await self.future
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user != self.owner:
@@ -87,11 +107,12 @@ class ConfirmationView(discord.ui.View):
 
     @discord.ui.button(label="Yes", style=discord.ButtonStyle.green)
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        self.event.set()
+        self.future.set_result(True)
         button.disabled = True
         await interaction.response.edit_message(view=self)
         self.stop()
 
     async def on_timeout(self):
+        self.future.set_result(False)
         self.confirm.disabled = True
         await self.message.edit(view=self)

@@ -55,9 +55,7 @@ class ReglePanel(ViewContainer):
         header = "Correct!" if correct else "Aw..."
         self.end(f"{header}\nUploaded {log.format_upload_time()}")
 
-        # disgusting
-        self.add_item(await log.to_item())
-        self._children.insert(self._children.index(self.sep), self._children.pop())
+        self.insert_item_before(await log.to_item(), self.sep)
 
         async with self.bot.acquire() as conn:
             await conn.execute("INSERT INTO RegleGames (player_id, guessed, correct, gist) VALUES (?, ?, ?, ?)", (interaction.user.id, guess, self.game.victor, gist_of(self.game)))
@@ -137,8 +135,7 @@ class WillePanel(ViewContainer):
         if isinstance(item, discord.ui.TextDisplay):
             self.display.add_item(item)
         else:
-            self.add_item(item)
-            self._children.insert(self._children.index(self.will), self._children.pop())
+            self.insert_item_before(item, self.will)
 
         async with self.bot.acquire() as conn:
             await conn.execute("INSERT INTO WilleGames (player_id, guessed, correct, gist) VALUES (?, ?, ?, ?)", (interaction.user.id, guessed, self.correct, gist_of(self.game)))
@@ -166,8 +163,7 @@ class Gaming(commands.Cog):
         """Guess which faction won a game, given only the lineup."""
         victor = random.choice([gamelogs.town, gamelogs.coven])
         game, = await conn.fetchone("SELECT analysis FROM Games WHERE victor = ?1 LIMIT 1 OFFSET ABS(RANDOM()) % (SELECT COUNT(*) FROM Games WHERE victor = ?1)", (victor,))
-        view = ContainerView(ctx.author, ReglePanel(self.bot, game))
-        view.message = await ctx.send(view=view)
+        await ctx.send_container_view(ReglePanel(self.bot, game))
 
     @commands.command()
     @commands.guild_only()
@@ -195,8 +191,7 @@ class Gaming(commands.Cog):
             if player.will and (not player.died or player.died >= gamelogs.DayTime(2, gamelogs.Time.NIGHT)):
                 break
 
-        view = ContainerView(ctx.author, WillePanel(self.bot, game, player, member, player_id))
-        view.message = await ctx.send(view=view)
+        await ctx.send_container_view(WillePanel(self.bot, game, player, member, player_id))
 
 
 async def setup(bot: Lookout):
