@@ -587,7 +587,7 @@ class Gaming(commands.Cog):
                 players["You"] = pov
 
             rng = random.Random(int(digest, 16))
-            anonymize = rng.random() < 0.9
+            anonymize = rng.random() < 0.2
             renames = {}
             for player in candidates:
                 if anonymize and player.game_name not in FREE_SKINS or player.game_name in PAID_SKINS:
