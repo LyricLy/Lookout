@@ -16,7 +16,7 @@ import config
 class ViewGamePanel(ViewContainer):
     header = discord.ui.TextDisplay("## Game data")
     display = discord.ui.TextDisplay("")
-    sep = discord.ui.Separator()
+    sep = discord.ui.Separator(spacing=discord.SeparatorSpacing.large)
     management_header = discord.ui.TextDisplay("## Management")
     tooltip = discord.ui.TextDisplay(
         "As a game host, you can declare the result of this game null and void. It will no longer affect ratings or statistics, be viewable by searching, or appear in Regle, Wille, or Logle."
@@ -50,8 +50,9 @@ class ViewGamePanel(ViewContainer):
     async def annul(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await interaction.response.defer()
         async with self.bot.acquire() as conn:
-            await conn.execute("DELETE FROM WilleGames WHERE gist = ?", (self.gist,))
-            await conn.execute("DELETE FROM RegleGames WHERE gist = ?", (self.gist,))
+            await conn.execute("DELETE FROM WilleGames WHERE game = ?", (self.gist,))
+            await conn.execute("DELETE FROM RegleGames WHERE game = ?", (self.gist,))
+            await conn.execute("DELETE FROM LogleGames WHERE game = ?", (self.gist,))
             await conn.execute("DELETE FROM Appearances WHERE game = ?", (self.gist,))
             await conn.execute("UPDATE Gamelogs SET game = NULL, qualified = 0 WHERE game = ?", (self.gist,))
             await conn.execute("DELETE FROM Games WHERE gist = ?", (self.gist,))

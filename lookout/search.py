@@ -161,9 +161,8 @@ class SearchResults(ViewContainer):
             bold = "**"*player.won
             death = "-#"*bool(player.died)
             obsc = ('\u200b'*obscure).join
-            role = f"{player.starting_ident.role} {player.ending_ident}" if player.starting_ident != player.ending_ident else f"{player.starting_ident}"
             mark = FOOTNOTES[bl[0]] if (bl := discord.utils.find(lambda t: player.account_name in t[1][1], enumerate(bl_threads))) else ""
-            rollout.append(f"{death} - [{player.number}] {obsc(player.game_name)} ({obsc(player.account_name)}{mark}) - {bold}{role}{bold}")
+            rollout.append(f"{death} - [{player.number}] {obsc(player.game_name)} ({obsc(player.account_name)}{mark}) - {bold}{player.short_ident}{bold}")
 
         if self.file:
             self.remove_item(self.file)

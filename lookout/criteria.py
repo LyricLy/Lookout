@@ -254,3 +254,49 @@ class WilleGamesPlayedCriterion(Criterion[int]):
         if argument.lower() not in ["played wille", "wille played"]:
             raise commands.BadArgument()
         return cls(ctx.bot)
+
+
+class LogleWinrateCriterion(Criterion[Winrate]):
+    def __init__(self, bot: Lookout) -> None:
+        self.bot = bot
+
+    def desc(self) -> str | None:
+        return "winrate in Logle"
+
+    def show_key(self, key: Winrate) -> str:
+        return str(key)
+
+    @needs_db
+    async def decorate_players(self, conn: Connection, at: Timecode) -> list[tuple[DisplayablePlayer, Winrate]]:
+        # `at` is unused
+        rs = await conn.fetchall("SELECT player_id, COALESCE(SUM((guessed = correct) * (2*num_targets-1)), 0), COUNT(*) FROM LogleGames GROUP BY player_id")
+        return [(ReglePlayerInfo(player), Winrate(s, n)) for player_id, s, n in rs if (player := self.bot.get_user(player_id))]
+
+    @classmethod
+    async def convert(cls, ctx: Context, argument: str) -> Self:
+        if argument.lower() != "logle":
+            raise commands.BadArgument()
+        return cls(ctx.bot)
+
+
+class LogleGamesPlayedCriterion(Criterion[int]):
+    def __init__(self, bot: Lookout) -> None:
+        self.bot = bot
+
+    def desc(self) -> str | None:
+        return "number of games played of Logle"
+
+    def show_key(self, key: int) -> str:
+        return f"{key:,}"
+
+    @needs_db
+    async def decorate_players(self, conn: Connection, at: Timecode) -> list[tuple[DisplayablePlayer, int]]:
+        # `at` is unused
+        rs = await conn.fetchall("SELECT player_id, COUNT(*) FROM LogleGames GROUP BY player_id")
+        return [(ReglePlayerInfo(player), n) for player_id, n in rs if (player := self.bot.get_user(player_id))]
+
+    @classmethod
+    async def convert(cls, ctx: Context, argument: str) -> Self:
+        if argument.lower() not in ["played logle", "logle played"]:
+            raise commands.BadArgument()
+        return cls(ctx.bot)

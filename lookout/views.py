@@ -8,6 +8,9 @@ class ViewContainer(discord.ui.Container["ContainerView"]):
     async def start(self) -> None:
         pass
 
+    async def destroy(self) -> None:
+        pass
+
     def insert_item(self, index: int, item: discord.ui.Item) -> Self:
         self.add_item(item)
         self._children.insert(index, self._children.pop())
@@ -26,15 +29,10 @@ class ViewContainer(discord.ui.Container["ContainerView"]):
         return super().view  # type: ignore
 
     def send_args(self) -> dict:
-        assert self.view
         return self.view.send_args()
 
     def edit_args(self) -> dict:
-        assert self.view
         return self.view.edit_args()
-
-    async def destroy(self) -> None:
-        raise NotImplementedError
  
 
 class File(discord.ui.File["ContainerView"]):
@@ -62,7 +60,7 @@ class ContainerView[T: ViewContainer](discord.ui.LayoutView):
     _files: list[File]
 
     def __init__(self, owner: discord.abc.User, container: T) -> None:
-        super().__init__()
+        super().__init__(timeout=3)
         self.owner = owner
         self.container = container
         self._files = []

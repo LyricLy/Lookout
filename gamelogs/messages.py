@@ -164,6 +164,51 @@ class PlayerInfo(Message):
         )
 
 @dataclass
+class VoteAgainstInstead(SystemMessage):
+    who: str
+    against: str
+    regex = re.compile(r"(.+) instead voted against (.+)\.")
+
+@dataclass
+class VoteAgainst(SystemMessage):
+    who: str
+    against: str
+    regex = re.compile(r"(.+) voted against (.+)\.")
+
+@dataclass
+class CancelVote(SystemMessage):
+    who: str
+    regex = re.compile(r"(.+) cancelled their vote.")
+
+@dataclass
+class VoteToExecute(SystemMessage):
+    who: str
+    against: str
+    regex = re.compile(r"(.+) voted to execute (.+)\.")
+
+@dataclass
+class VoteGuilty(SystemMessage):
+    who: str
+    against: str
+    regex = re.compile(r"(.+) voted (.+) guilty!")
+
+@dataclass
+class Abstain(SystemMessage):
+    who: str
+    against: str
+    regex = re.compile(r"(.+) abstained on (.+)!")
+
+@dataclass
+class VoteInnocent(SystemMessage):
+    who: str
+    against: str
+    regex = re.compile(r"(.+) voted (.+) innocent!")
+
+@dataclass
+class PovDied(SystemMessage):
+    regex = re.compile(r"You were (?:killed|executed|murdered|set on fire|haunted).*\!|You have succumbed to a pestilence\!|You jailed War and were obliterated\. Flummery\!")
+
+@dataclass
 class Whispering(SystemMessage):
     who: str
     to: str
@@ -200,14 +245,38 @@ class NightDeath(SystemMessage):
     regex = re.compile(r"(.+) died last night\.")
 
 @dataclass
-class Tribunal(SystemMessage):
+class TribunalDeclaration(SystemMessage):
     who: str
     regex = re.compile(r"(.+) the Marshal, has declared a Tribunal\.")
 
 @dataclass
-class FoundGuilty(SystemMessage):
+class TribunalCount(SystemMessage):
+    num: int
+    regex = re.compile(r"You may execute (\d+) (?:people|person) today\.")
+
+@dataclass
+class MayorReveal(SystemMessage):
     who: str
-    regex = re.compile(r"(.+) was found guilty!")
+    regex = re.compile(r"(.+) has revealed themself as the Mayor!")
+
+@dataclass
+class PutToDeath(SystemMessage):
+    who: str
+    guilty: int
+    innocent: int
+    regex = re.compile(r"The Town decided to put (.+) to death by a vote of (\d+) to (\d+)\.")
+
+@dataclass
+class Pardoned(SystemMessage):
+    who: str
+    innocent: int
+    guilty: int
+    regex = re.compile(r"The Town decided to pardon (.+) by a vote of (\d+) to (\d+)\.")
+
+@dataclass
+class Prosecuted(SystemMessage):
+    who: str
+    regex = re.compile(r"(.+) has been judged guilty and will be put to death.")
 
 @dataclass
 class TrialsRemaining(SystemMessage):

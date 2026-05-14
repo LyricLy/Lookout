@@ -5,7 +5,7 @@ import re
 import sqlite3
 import logging
 import importlib
-from typing import TypedDict, Callable, Awaitable
+from typing import TypedDict, Callable, Awaitable, Literal, assert_never
 
 import asqlite
 import sqlite_spellfix
@@ -25,6 +25,19 @@ class JIdentity(TypedDict):
 
 JDayTime = tuple[str, int]
 
+class JProsecution(TypedDict):
+    ty: Literal["prosecution"]
+
+class JTribunal(TypedDict):
+    ty: Literal["tribunal"]
+
+class JVote(TypedDict):
+    ty: Literal["vote"]
+    guilty: int
+    innocent: int
+
+JHangCause = JProsecution | JTribunal | JVote
+
 class JPlayer(TypedDict):
     number: int
     game_name: str
@@ -33,8 +46,8 @@ class JPlayer(TypedDict):
     ending_ident: JIdentity
     will: str | None
     died: JDayTime | None
-    won: bool 
-    hanged: bool
+    won: bool
+    hanged: JHangCause | None
     dced: bool
 
 class JGameResult(TypedDict):
@@ -49,6 +62,17 @@ class JGameResult(TypedDict):
 
 def ser_day_time(daytime: gamelogs.DayTime) -> JDayTime:
     return (daytime.time.name.lower(), daytime.day)
+
+def ser_hang_cause(cause: gamelogs.HangCause) -> JHangCause:
+    match cause:
+        case gamelogs.Prosecution():
+            return {"ty": "prosecution"}
+        case gamelogs.Tribunal():
+            return {"ty": "tribunal"}
+        case gamelogs.Vote(guilty, innocent):
+            return {"ty": "vote", "guilty": guilty, "innocent": innocent}
+        case u:
+            assert_never(u)
 
 def ser_faction(faction: gamelogs.Faction | None) -> str | None:
     return repr(faction) if faction else None
@@ -70,7 +94,7 @@ def ser_player(player: gamelogs.Player) -> JPlayer:
         "will": player.will,
         "died": ser_day_time(player.died) if player.died else None,
         "won": player.won,
-        "hanged": player.hanged,
+        "hanged": ser_hang_cause(player.hanged) if player.hanged else None,
         "dced": player.dced,
     }
 
@@ -88,6 +112,17 @@ def ser_game_result(game: gamelogs.GameResult) -> JGameResult:
 
 def de_day_time(daytime: JDayTime) -> gamelogs.DayTime:
     return gamelogs.DayTime(daytime[1], gamelogs.Time[daytime[0].upper()])
+
+def de_hang_cause(cause: JHangCause | bool) -> gamelogs.HangCause:
+    match cause:
+        case {"ty": "prosecution"}:
+            return gamelogs.Prosecution()
+        case {"ty": "tribunal"}:
+            return gamelogs.Tribunal()
+        case {"ty": "vote", "guilty": guilty, "innocent": innocent}:
+            return gamelogs.Vote(guilty, innocent)
+        case _:
+            return gamelogs.Vote(0, 0)
 
 def de_faction(faction: str | None) -> gamelogs.Faction | None:
     return getattr(gamelogs, faction) if faction else None  # type: ignore
@@ -109,7 +144,7 @@ def de_player(player: JPlayer) -> gamelogs.Player:
         player.get("will"),
         de_day_time(player["died"]) if player["died"] else None,
         player["won"],
-        player.get("hanged", False),
+        de_hang_cause(hanged) if (hanged := player.get("hanged")) else None,
         player.get("dced", False),
     )
 
@@ -158,6 +193,7 @@ def init(db: sqlite3.Connection):
     sqlite3.register_adapter(gamelogs.Faction, ser_faction)
     sqlite3.register_converter("FACTION", lambda s: de_faction(s.decode()))
     sqlite3.register_adapter(dict, msgpack.packb)
+    sqlite3.register_adapter(list, msgpack.packb)
     sqlite3.register_converter("MSGPACK", msgpack.unpackb)
     sqlite3.register_adapter(datetime.datetime, datetime.datetime.isoformat)
     sqlite3.register_converter("DATETIME", lambda s: datetime.datetime.fromisoformat(s.decode()))

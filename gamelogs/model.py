@@ -201,6 +201,21 @@ class DayTime:
     def __str__(self):
         return f"{self.time}{self.day}"
 
+@_dataclass(frozen=True)
+class Vote:
+    guilty: int
+    innocent: int
+
+@_dataclass(frozen=True)
+class Prosecution:
+    pass
+
+@_dataclass(frozen=True)
+class Tribunal:
+    pass
+
+type HangCause = Vote | Prosecution | Tribunal
+
 @_dataclass(unsafe_hash=True)
 class Player:
     number: int
@@ -211,8 +226,15 @@ class Player:
     will: str | None = _field(compare=False)
     died: DayTime | None = _field(compare=False, default=None)
     won: bool = _field(compare=False, default=False)
-    hanged: bool = _field(compare=False, default=False)
+    hanged: HangCause | None = _field(compare=False, default=None)
     dced: bool = _field(compare=False, default=False)
+
+    @property
+    def short_ident(self) -> str:
+        return f"{self.starting_ident} {self.ending_ident}" if self.starting_ident != self.ending_ident else f"{self.ending_ident}"
+
+    def lived_to(self, at: DayTime) -> bool:
+        return not self.died or self.died >= at
 
     def __str__(self):
         ident = f"{self.ending_ident}" if self.starting_ident == self.ending_ident else f"{self.ending_ident} (originally {self.starting_ident})"
@@ -236,13 +258,12 @@ class GameResult:
     outcome: Outcome
 
     def alive_players(self, at: DayTime = (default := DayTime())) -> list[Player]:
-        at = self.ended if at is self.default else at
-        return [player for player in self.players if not player.died or player.died >= at]
+        return [player for player in self.players if (not player.died if at is self.default else player.lived_to(at))]
 
     def saw_hunt(self, player: Player) -> bool:
         if player not in self.players:
             raise ValueError("player is not from this game")
-        return bool(self.hunt_reached and (not player.died or player.died >= self.hunt_reached))
+        return bool(self.hunt_reached and player.lived_to(self.hunt_reached))
 
     def __str__(self) -> str:
         return "\n".join(map(str, self.players))

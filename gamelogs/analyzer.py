@@ -18,7 +18,7 @@ class Analyzer[R]:
         return ZipAnalyzer(self, other)
 
 class ZipAnalyzer[R1, R2](Analyzer[tuple[R1, R2]]):
-    def __init__(self, x: Analyzer[R1], y: Analyzer[R2]):
+    def __init__(self, x: Analyzer[R1], y: Analyzer[R2]) -> None:
         self.x = x
         self.y = y
 
@@ -31,7 +31,7 @@ class ZipAnalyzer[R1, R2](Analyzer[tuple[R1, R2]]):
 
 
 class MessageCountAnalyzer(Analyzer[int]):
-    def __init__(self):
+    def __init__(self) -> None:
         self.count = 0
 
     def get_message(self, message: Message) -> None:
@@ -51,7 +51,6 @@ class ResultAnalyzer(Analyzer[GameResult]):
         self.dced = set()
         self.hunt_reached = None
         self.in_trib = False
-        self.trial_period = False
         self.time = DayTime()
         self.modifiers = []
         self.death_popped = False
@@ -71,11 +70,11 @@ class ResultAnalyzer(Analyzer[GameResult]):
                 self.modifiers.append("Town Traitor")
                 break
 
-    def kill(self, who: str, *, last_night: bool = False, hanged: bool = False, dced: bool = False) -> None:
+    def kill(self, who: str, *, last_night: bool = False, hanged: HangCause | None = None, dced: bool = False) -> None:
         player = self.players[who]
 
         if hanged:
-            player.hanged = True
+            player.hanged = hanged
             if player.ending_ident.role == by_name("Jester"):
                 player.won = True
         if dced:
@@ -111,19 +110,19 @@ class ResultAnalyzer(Analyzer[GameResult]):
                 self.kill(who)
             case Upped(who):
                 if self.in_trib:
-                    self.kill(who, hanged=True)
+                    self.kill(who, hanged=Tribunal())
             case NightDeath(who):
                 self.kill(who, last_night=True)
             case DayDeath(who):
                 self.kill(who)
-            case FoundGuilty(who):
-                player = self.players[who]
-                self.kill(who, hanged=True)
+            case PutToDeath(who, guilty, innocent):
+                self.kill(who, hanged=Vote(guilty, innocent))
+            case Prosecuted(who):
+                self.kill(who, hanged=Prosecution())
             case DayStart(1):
                 self.judge_miscoloured_townies()
             case DayStart(n):
                 self.time = DayTime(n, Time.DAY)
-                self.trial_period = False
                 for dc in self.dced:
                     self.kill(dc, last_night=True, dced=True)
                 self.dced.clear()
@@ -142,7 +141,7 @@ class ResultAnalyzer(Analyzer[GameResult]):
             case HuntWarning(days_left):
                 if not self.hunt_reached:
                     self.hunt_reached = self.time.in_days(days_left - 3)
-            case Tribunal():
+            case TribunalDeclaration() | TribunalCount():
                 self.in_trib = True
             case Disconnect(who):
                 self.dced.add(who)
@@ -152,8 +151,6 @@ class ResultAnalyzer(Analyzer[GameResult]):
                 except KeyError:
                     # shit. they're still alive
                     self.players[who].died = None
-            case TrialsRemaining() if not self.trial_period:
-                self.trial_period = True
             case DeathPop():
                 self.death_popped = True
             case DrawWarning():
