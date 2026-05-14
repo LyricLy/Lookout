@@ -202,13 +202,14 @@ class LogleAnalyzer(gamelogs.Analyzer[tuple[list[str], list[gamelogs.Player]]]):
                     case None:
                         can_be_conj = any([gamelogs.by_name("Conjurer") in (p.starting_ident.role, p.ending_ident.role) for p in self.alive_d2])
                         can_be_dep = (
-                            any([(dep := p).ending_ident.role == gamelogs.by_name("Deputy") for p in self.alive_d2])
-                       and (dep.ending_ident.tt
-                         or any([p.starting_ident.role in (gamelogs.by_name("Enchanter"), gamelogs.by_name("Soul Collector")) for p in self.players.values()])
+                            any([p.ending_ident.role == gamelogs.by_name("Deputy") and p.ending_ident.tt for p in self.alive_d2])
+                         or (
+                                any([p.ending_ident.role == gamelogs.by_name("Deputy") for p in self.alive_d2])
+                            and any([p.starting_ident.role in (gamelogs.by_name("Enchanter"), gamelogs.by_name("Soul Collector")) for p in self.players.values()])
                         ))
                         if victim.ending_ident.role.default_faction == gamelogs.coven or can_be_dep and not can_be_conj:
                             self.messages.append("-# They were shot by a **Deputy**.")
-                        elif can_be_conj and not can_be_dep:
+                        elif not can_be_dep:
                             self.messages.append("-# They were killed by a **Conjurer**.")
                     case u:
                         assert_never(u)
