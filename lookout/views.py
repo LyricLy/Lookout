@@ -60,7 +60,7 @@ class ContainerView[T: ViewContainer](discord.ui.LayoutView):
     _files: list[File]
 
     def __init__(self, owner: discord.abc.User, container: T) -> None:
-        super().__init__(timeout=3)
+        super().__init__(timeout=300)
         self.owner = owner
         self.container = container
         self._files = []
