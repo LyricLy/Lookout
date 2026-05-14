@@ -250,6 +250,10 @@ class ReglePanel(ViewContainer):
         self.game = game
         self.draw_players("Who won?")
 
+    @needs_db
+    async def write_result(self, conn: Connection, guessed: gamelogs.Faction | None) -> None:
+        await conn.execute("INSERT INTO RegleGames (player_id, guessed, correct, game) VALUES (?, ?, ?, ?)", (self.view.owner.id, guessed, self.game.victor, gist_of(self.game)))
+
     def draw_players(self, header: str, *, obscure: bool = False) -> None:
         players = sorted(self.game.players, key=lambda p: (
             (i := p.starting_ident).faction == gamelogs.coven,
@@ -284,9 +288,7 @@ class ReglePanel(ViewContainer):
 
         self.insert_item_before(await log.to_item(), self.sep)
 
-        async with self.bot.acquire() as conn:
-            await conn.execute("INSERT INTO RegleGames (player_id, guessed, correct, game) VALUES (?, ?, ?, ?)", (interaction.user.id, guess, self.game.victor, gist_of(self.game)))
-
+        await self.write_result(guess)
         self.view.stop()
         await interaction.response.edit_message(**self.edit_args())
 
@@ -305,7 +307,7 @@ class ReglePanel(ViewContainer):
 
     @needs_db
     async def destroy(self, conn: Connection) -> None:
-        await conn.execute("INSERT INTO RegleGames (player_id, guessed, correct, game) VALUES (?, NULL, ?, ?)", (self.view.owner.id, self.game.victor, gist_of(self.game)))
+        await self.write_result(None)
         self.end("Timed out")
 
 
@@ -323,6 +325,10 @@ class WillePanel(ViewContainer):
         self.member = member
         self.correct = correct
         self.draw("# Whose will is this?")
+
+    @needs_db
+    async def write_result(self, conn: Connection, guessed: int | None) -> None:
+        await conn.execute("INSERT INTO WilleGames (player_id, guessed, correct, game) VALUES (?, ?, ?, ?)", (self.view.owner.id, guessed, self.correct, gist_of(self.game)))
 
     def draw(self, header: str, *, obscure: bool = False) -> None:
         assert self.player.will
@@ -367,9 +373,7 @@ class WillePanel(ViewContainer):
         else:
             self.insert_item_before(item, self.will)
 
-        async with self.bot.acquire() as conn:
-            await conn.execute("INSERT INTO WilleGames (player_id, guessed, correct, game) VALUES (?, ?, ?, ?)", (interaction.user.id, guessed, self.correct, gist_of(self.game)))
-
+        await self.write_result(guessed)
         self.view.stop()
         await interaction.response.edit_message(**self.edit_args())
 
@@ -379,7 +383,7 @@ class WillePanel(ViewContainer):
 
     @needs_db
     async def destroy(self, conn: Connection) -> None:
-        await conn.execute("INSERT INTO WilleGames (player_id, guessed, correct, game) VALUES (?, NULL, ?, ?)", (self.view.owner.id, self.correct, gist_of(self.game)))
+        await self.write_result(None)
         self.end("# Timed out")
 
 
@@ -436,6 +440,20 @@ class LoglePanel(ViewContainer):
             self.add_item(question)
             self.add_item(prompt)
 
+    @needs_db
+    async def write_result(self, conn: Connection, guessed: list[gamelogs.Faction] | None) -> None:
+        await conn.execute(
+            "INSERT INTO LogleGames (player_id, guessed, correct, game, num_targets, targets) VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                self.view.owner.id,
+                [str(x) for x in guessed] if guessed is not None else None,
+                [str(p.ending_ident.faction) for p in self.targets],
+                self.gist,
+                len(self.targets),
+                [t.account_name for t in self.targets],
+            ),
+        )
+
     async def on_guess(self) -> None:
         guessed = [p.guess for p in self.prompts]
         if not all(guessed):
@@ -486,20 +504,12 @@ class LoglePanel(ViewContainer):
         else:
             self.add_item(item)
 
-        async with self.bot.acquire() as conn:
-            await conn.execute(
-                "INSERT INTO LogleGames (player_id, guessed, correct, game, num_targets) VALUES (?, ?, ?, ?, ?)",
-                (self.view.owner.id, [str(x) for x in guessed], [str(x) for x in answers], self.gist, len(self.targets)),
-            )
-
+        await self.write_result(guessed)  # type: ignore
         self.view.stop()
 
     @needs_db
     async def destroy(self, conn: Connection) -> None:
-        await conn.execute(
-            "INSERT INTO LogleGames (player_id, guessed, correct, game, num_targets) VALUES (?, NULL, ?, ?, ?)",
-            (self.view.owner.id, [str(p.ending_ident.faction) for p in self.targets], self.gist, len(self.targets)),
-        )
+        await self.write_result(None)
         for prompt in self.prompts:
             prompt.guess_town.disabled = True
             prompt.guess_coven.disabled = True

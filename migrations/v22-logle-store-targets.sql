@@ -1,0 +1,1 @@
+ALTER TABLE LogleGames ADD COLUMN targets MSGPACK;

@@ -27,4 +27,4 @@ CREATE TABLE LogleGames (
     game TEXT NOT NULL,
     num_targets INTEGER NOT NULL,
     FOREIGN KEY (game) REFERENCES Games (gist)
-)
+);
