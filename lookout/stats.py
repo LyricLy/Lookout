@@ -310,7 +310,18 @@ class Stats(commands.Cog):
 
         if r:
             embed.add_field(name="Player blacklisted", value=f"<#{r[0]}>", inline=False)
-        await ctx.send(embed=embed)
+
+        if player.id == 6:
+            WAIT = 2.25
+            colours = [discord.Colour(0xffff00), discord.Colour(0xff0000)]
+            embed.colour = colours[1]
+            msg = await ctx.send(embed=embed)
+            for i in range(int(300 / WAIT)):
+                await asyncio.sleep(WAIT)
+                embed.colour = colours[i%2]
+                await msg.edit(embed=embed)
+        else:
+            await ctx.send(embed=embed)
 
     @commands.command(aliases=["lb", "leaderboard", "players"])
     @needs_db
