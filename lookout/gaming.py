@@ -223,14 +223,15 @@ class LogleAnalyzer(gamelogs.Analyzer[tuple[list[str], list[gamelogs.Player]]]):
                 small = "-# "*(who not in self.targets)
                 self.messages.append(f"{small}{self._(who)} has revealed themselves as the **Mayor**!")
             case messages.TribunalDeclaration(who):
-                who = self.players[who]
+                who = self.players[who] if who else discord.utils.find(lambda p: p.lived_to(D2) and p.ending_ident.role == gamelogs.by_name("Marshal"), self.players.values())
                 small = "-# "*(who not in self.targets)
-                self.messages.append(f"{small}{self._(who)}, the **Marshal**, has declared a **Tribunal**.")
+                name = self._(who) if who else "(???)"
+                self.messages.append(f"{small}{name}, the **Marshal**, has declared a **Tribunal**.")
                 self.trib = True
             case messages.TribunalCount(2):
-                self.messages.append("-# You may execute 2 people today.")
+                self.messages.append("-# You may execute **2** people today.")
             case messages.TribunalCount(1):
-                self.messages.append("-# You may execute 1 person today.")
+                self.messages.append("-# You may execute **1** person today.")
             case messages.DayStart(day):
                 self.messages.append(f"### Day {day}")
             case messages.NightStart():
@@ -575,7 +576,8 @@ class Gaming(commands.Cog):
         special = random.random() < 0.050603
 
         while True:
-            digest, content, game, gist = await conn.fetchone("SELECT hash, clean_content, analysis, gist FROM Games INNER JOIN Gamelogs ON hash = from_log LIMIT 1 OFFSET ABS(RANDOM()) % (SELECT COUNT(*) FROM Games)")
+            #digest, content, game, gist = await conn.fetchone("SELECT hash, clean_content, analysis, gist FROM Games INNER JOIN Gamelogs ON hash = from_log LIMIT 1 OFFSET ABS(RANDOM()) % (SELECT COUNT(*) FROM Games)")
+            digest, content, game, gist = await conn.fetchone("SELECT hash, clean_content, analysis, gist FROM Games INNER JOIN Gamelogs ON hash = from_log WHERE filename = 'TownTraitor-2024-12-07-22-28.html'")
             if any([p.game_name == "You" for p in game.players]):
                 continue
             alive_n2 = game.alive_players(N2)

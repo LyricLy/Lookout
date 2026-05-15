@@ -78,7 +78,7 @@ class SystemMessage(Message):
 
     @classmethod
     def from_match(cls, m: re.Match) -> Self:
-        return cls(*[int(x) if x.isdigit() else x for x in m.groups()])
+        return cls(*[None if x is None else int(x) if x.isdigit() else x for x in m.groups()])
 
     @classmethod
     def from_line(cls, line: Line) -> Self:
@@ -178,7 +178,7 @@ class VoteAgainst(SystemMessage):
 @dataclass
 class CancelVote(SystemMessage):
     who: str
-    regex = re.compile(r"(.+) cancelled their vote.")
+    regex = re.compile(r"(.+) cancelled their vote\.")
 
 @dataclass
 class VoteToExecute(SystemMessage):
@@ -217,7 +217,7 @@ class Whispering(SystemMessage):
 @dataclass
 class LeftAWill(SystemMessage):
     who: str
-    regex = re.compile(r"(.+) left a last will.")
+    regex = re.compile(r"(.+) left a last will\.")
 
 @dataclass
 class Upped(SystemMessage):
@@ -246,8 +246,8 @@ class NightDeath(SystemMessage):
 
 @dataclass
 class TribunalDeclaration(SystemMessage):
-    who: str
-    regex = re.compile(r"(.+) the Marshal, has declared a Tribunal\.")
+    who: str | None
+    regex = re.compile(r"(?:(.+) the Marshal,|A Marshal) has declared a Tribunal\.")
 
 @dataclass
 class TribunalCount(SystemMessage):
@@ -276,7 +276,7 @@ class Pardoned(SystemMessage):
 @dataclass
 class Prosecuted(SystemMessage):
     who: str
-    regex = re.compile(r"(.+) has been judged guilty and will be put to death.")
+    regex = re.compile(r"(.+) has been judged guilty and will be put to death\.")
 
 @dataclass
 class TrialsRemaining(SystemMessage):
@@ -310,7 +310,7 @@ class HuntWarning(SystemMessage):
 
 @dataclass
 class DrawWarning(SystemMessage):
-    regex = re.compile(r"If no one dies by tomorrow the game will end in a draw.")
+    regex = re.compile(r"If no one dies by tomorrow the game will end in a draw\.")
 
 @dataclass
 class StartJunk(SystemMessage):
