@@ -576,8 +576,7 @@ class Gaming(commands.Cog):
         special = random.random() < 0.050603
 
         while True:
-            #digest, content, game, gist = await conn.fetchone("SELECT hash, clean_content, analysis, gist FROM Games INNER JOIN Gamelogs ON hash = from_log LIMIT 1 OFFSET ABS(RANDOM()) % (SELECT COUNT(*) FROM Games)")
-            digest, content, game, gist = await conn.fetchone("SELECT hash, clean_content, analysis, gist FROM Games INNER JOIN Gamelogs ON hash = from_log WHERE filename = 'TownTraitor-2024-12-07-22-28.html'")
+            digest, content, game, gist = await conn.fetchone("SELECT hash, clean_content, analysis, gist FROM Games INNER JOIN Gamelogs ON hash = from_log LIMIT 1 OFFSET ABS(RANDOM()) % (SELECT COUNT(*) FROM Games)")
             if any([p.game_name == "You" for p in game.players]):
                 continue
             alive_n2 = game.alive_players(N2)
