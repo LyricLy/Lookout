@@ -1,4 +1,5 @@
 import copy
+import datetime
 import logging
 import random
 import re
@@ -92,10 +93,11 @@ class PovAnalyzer(gamelogs.Analyzer[gamelogs.Player | None]):
 
 
 class LogleAnalyzer(gamelogs.Analyzer[tuple[list[str], list[gamelogs.Player]]]):
-    def __init__(self, players: dict[str, gamelogs.Player], targets: list[gamelogs.Player], renames: dict[str, str]) -> None:
+    def __init__(self, players: dict[str, gamelogs.Player], targets: list[gamelogs.Player], renames: dict[str, str], filename_time: datetime.datetime) -> None:
         self.players = players
         self.renames = renames
         self.targets = targets
+        self.filename_time = filename_time
         self.messages: list[str] = []
         self.tribbed: list[gamelogs.Player] = []
         self.going = False
@@ -214,7 +216,7 @@ class LogleAnalyzer(gamelogs.Analyzer[tuple[list[str], list[gamelogs.Player]]]):
                     case u:
                         assert_never(u)
 
-                if victim.ending_ident.role != gamelogs.by_name("Illusionist"):
+                if self.filename_time >= datetime.datetime(2025, 3, 25, 6, 0) and victim.ending_ident.role != gamelogs.by_name("Illusionist"):
                     self.messages.append(f"-# Their role was **{victim.ending_ident}**.")
             case messages.TrialsRemaining(count):
                 self.messages.append(f"-# There are **{count}** possible trials remaining today.")
@@ -576,7 +578,9 @@ class Gaming(commands.Cog):
         special = random.random() < 0.050603
 
         while True:
-            digest, content, game, gist = await conn.fetchone("SELECT hash, clean_content, analysis, gist FROM Games INNER JOIN Gamelogs ON hash = from_log LIMIT 1 OFFSET ABS(RANDOM()) % (SELECT COUNT(*) FROM Games)")
+            digest, content, game, gist, filename_time = await conn.fetchone(
+                "SELECT hash, clean_content, analysis, gist, filename_time FROM Games INNER JOIN Gamelogs ON hash = from_log LIMIT 1 OFFSET ABS(RANDOM()) % (SELECT COUNT(*) FROM Games)"
+            )
             if any([p.game_name == "You" for p in game.players]):
                 continue
             alive_n2 = game.alive_players(N2)
@@ -611,7 +615,7 @@ class Gaming(commands.Cog):
                     player.game_name = new_name
 
             try:
-                logs, candidates = gamelogs.parse(content, LogleAnalyzer(players, candidates, renames), clean_tags=False)
+                logs, candidates = gamelogs.parse(content, LogleAnalyzer(players, candidates, renames, filename_time), clean_tags=False)
             except KeyError as e:
                 if e.args[0] == "You":
                     log.warning(f"couldn't find POV for log {digest} when it was necessary :(")

@@ -21,7 +21,7 @@ class Timecode:
 
     @classmethod
     def from_datetime(cls, dt: datetime.datetime) -> Self:
-        return cls(discord.utils.time_snowflake(dt), datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc))
+        return cls(discord.utils.time_snowflake(dt), datetime.datetime(1970, 1, 1))
 
     @classmethod
     def from_str(cls, s: str) -> Self:
