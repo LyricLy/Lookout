@@ -572,7 +572,7 @@ class Gaming(commands.Cog):
         """Guess a player's faction from their D2 logs.
 
         Both answers are equally likely.
-        If Anon Players is not enabled, there is a 20% chance the player's name will be anonymised anyway.
+        If Anon Players is not enabled, there is a 30% chance the player's name will be anonymised anyway.
         """
         factions = random.choices([gamelogs.town, gamelogs.coven], k=2)
         special = random.random() < 0.050603
@@ -603,7 +603,7 @@ class Gaming(commands.Cog):
                 players["You"] = pov
 
             rng = random.Random(int(digest, 16))
-            anonymize = rng.random() < 0.2
+            anonymize = rng.random() < 0.3
             renames = {}
             for player in candidates:
                 if anonymize and player.game_name not in FREE_SKINS or player.game_name in PAID_SKINS:
