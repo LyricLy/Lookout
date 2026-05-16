@@ -117,12 +117,12 @@ class LogleAnalyzer(gamelogs.Analyzer[tuple[list[str], list[gamelogs.Player]]]):
             out.append(parse_discord.Text(text))
 
         if content.text:
-            out.append(parse_discord.Text(content.text))
+            add_text(content.text)
 
         for child in content.getchildren():
             out.extend(self.render_message(child).nodes)
             if child.tail:
-                out.append(parse_discord.Text(child.tail))
+                add_text(child.tail)
 
         m = parse_discord.Markup(out)
         if content.tag == "b":
