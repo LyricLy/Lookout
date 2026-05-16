@@ -216,7 +216,7 @@ class LogleAnalyzer(gamelogs.Analyzer[tuple[list[str], list[gamelogs.Player]]]):
                     case u:
                         assert_never(u)
 
-                if self.filename_time >= datetime.datetime(2025, 3, 25, 6, 0) and victim.ending_ident.role != gamelogs.by_name("Illusionist"):
+                if self.filename_time < datetime.datetime(2025, 3, 25, 6, 0) or victim.ending_ident.role != gamelogs.by_name("Illusionist"):
                     self.messages.append(f"-# Their role was **{victim.ending_ident}**.")
             case messages.TrialsRemaining(count):
                 self.messages.append(f"-# There are **{count}** possible trials remaining today.")
