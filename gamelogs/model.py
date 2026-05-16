@@ -231,7 +231,7 @@ class Player:
 
     @property
     def short_ident(self) -> str:
-        return f"{self.starting_ident} {self.ending_ident}" if self.starting_ident != self.ending_ident else f"{self.ending_ident}"
+        return f"{self.starting_ident.role} {self.ending_ident}" if self.starting_ident != self.ending_ident else f"{self.ending_ident}"
 
     def lived_to(self, at: DayTime) -> bool:
         return not self.died or self.died >= at
