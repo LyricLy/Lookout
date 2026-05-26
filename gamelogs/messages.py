@@ -178,7 +178,7 @@ class VoteAgainst(SystemMessage):
 @dataclass
 class CancelVote(SystemMessage):
     who: str
-    regex = re.compile(r"(.+) cancelled their vote\.")
+    regex = re.compile(r"(.+) cancelled (?:their|your) vote\.")
 
 @dataclass
 class VoteToExecute(SystemMessage):
