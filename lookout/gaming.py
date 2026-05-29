@@ -308,8 +308,7 @@ class ReglePanel(ViewContainer):
         self.guess_town.disabled = True
         self.guess_coven.disabled = True
 
-    @needs_db
-    async def destroy(self, conn: Connection) -> None:
+    async def destroy(self) -> None:
         await self.write_result(None)
         self.end("Timed out")
 
@@ -384,8 +383,7 @@ class WillePanel(ViewContainer):
         self.draw(header, obscure=True)
         self.guess.disabled = True
 
-    @needs_db
-    async def destroy(self, conn: Connection) -> None:
+    async def destroy(self) -> None:
         await self.write_result(None)
         self.end("# Timed out")
 
@@ -510,8 +508,7 @@ class LoglePanel(ViewContainer):
         await self.write_result(guessed)  # type: ignore
         self.view.stop()
 
-    @needs_db
-    async def destroy(self, conn: Connection) -> None:
+    async def destroy(self) -> None:
         await self.write_result(None)
         for prompt in self.prompts:
             prompt.guess_town.disabled = True
