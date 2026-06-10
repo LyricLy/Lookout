@@ -206,7 +206,7 @@ class LogleAnalyzer(gamelogs.Analyzer[tuple[list[str], list[gamelogs.Player]]]):
                         can_be_dep = (
                             any([p.ending_ident.role == gamelogs.by_name("Deputy") and p.ending_ident.tt for p in self.alive_d2])
                          or (
-                                any([p.ending_ident.role == gamelogs.by_name("Deputy") for p in self.alive_d2])
+                                any([p.ending_ident.role == gamelogs.by_name("Deputy") for p in self.alive_d2 if p != victim])
                             and any([p.starting_ident.role in (gamelogs.by_name("Enchanter"), gamelogs.by_name("Soul Collector")) for p in self.players.values()])
                         ))
                         if victim.ending_ident.role.default_faction == gamelogs.coven or can_be_dep and not can_be_conj:
