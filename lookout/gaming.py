@@ -373,7 +373,7 @@ class WillePanel(ViewContainer):
         if isinstance(item, discord.ui.TextDisplay):
             self.display.add_item(item)
         else:
-            self.insert_item_before(item, self.will)
+            self.insert_item_before(item, self.sep)
 
         await self.write_result(guessed)
         self.view.stop()
