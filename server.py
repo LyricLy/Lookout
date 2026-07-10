@@ -21,6 +21,9 @@ async def get_db() -> asqlite.Pool:
     return quart.g.db
 
 def show_reason(r: sqlite3.Row) -> str:
+    if quart.request.headers["Host"] == "tt.dpyle.xyz":
+        return "You must change tt.dpyle.xyz to tt.lyricly.fans in your Blacklist config by 2027-03-23. See TT Seevee for more information."
+
     if r["no_retrial"]:
         pill = '<style="VampireColor">[No retrial]</style>'
     else:
