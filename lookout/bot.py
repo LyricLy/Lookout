@@ -127,7 +127,7 @@ class Lookout(commands.Bot):
         elif isinstance(error, commands.BadFlagArgument):
             await ctx.send(str(error.original))
         elif isinstance(error, commands.BadUnionArgument):
-            await ctx.send(str(error.errors[0]))
+            await ctx.send(str(discord.utils.find(lambda e: e.args, error.errors)))
         elif isinstance(error, commands.UserInputError):
             await ctx.send(str(error))
 
