@@ -15,11 +15,6 @@ ckdl: Any  # type: ignore
 
 app = quart.Quart(__name__)
 
-async def get_db() -> asqlite.Pool:
-    if not hasattr(quart.g, "db"):
-        quart.g.db = await db.create_pool("the.db")
-    return quart.g.db
-
 def show_reason(r: sqlite3.Row) -> str:
     if quart.request.headers["Host"] == "tt.dpyle.xyz":
         return "You must change tt.dpyle.xyz to tt.lyricly.fans in your Blacklist config by 2027-03-23. See TT Seevee for more information."
@@ -38,12 +33,13 @@ def show_reason(r: sqlite3.Row) -> str:
 
 @app.route("/")
 async def root():
-    db = await get_db()
-    async with db.acquire() as conn:
+    pool = await db.create_pool("the.db", size=1)
+    async with pool.acquire() as conn:
         dump = ckdl.Document(
             [ckdl.Node(None, "-", r["account_name"], reason=show_reason(r)) for r in await conn.fetchall("SELECT * FROM Blacklists")],
         ).dump(ckdl.EmitterOptions(version=1))
-        return quart.Response(dump, mimetype="application/vnd.kdl")
+    await pool.close()
+    return quart.Response(dump, mimetype="application/vnd.kdl")
 
 if __name__ == "__main__":
     app.run()

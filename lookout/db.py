@@ -201,8 +201,8 @@ def init(db: sqlite3.Connection):
     sqlite3.register_converter("TIMECODE", lambda s: Timecode.from_str(s.decode()))
     db.execute("PRAGMA synchronous = NORMAL")
 
-async def create_pool(path: str) -> asqlite.Pool:
-    db = await asqlite.create_pool(path, init=init, timeout=30, detect_types=asqlite.PARSE_DECLTYPES)
+async def create_pool(path: str, *, size: int = 10) -> asqlite.Pool:
+    db = await asqlite.create_pool(path, init=init, timeout=30, detect_types=asqlite.PARSE_DECLTYPES, size=size)
 
     async with db.acquire() as conn:
         current_version, = await conn.fetchone("PRAGMA user_version")  # type: ignore
