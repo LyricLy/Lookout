@@ -209,6 +209,9 @@ class IdentitySpecifier:
             return type(self)([])
         return replace(self, won=won)
 
+    async def start_parsing(self, ctx: Context, words: list[str]) -> None:
+        pass
+
     async def finish_parsing(self, ctx: Context, words: list[str]) -> None:
         if words:
             raise commands.BadArgument(f"I don't know what '{' '.join(words)}' means.")
@@ -218,6 +221,8 @@ class IdentitySpecifier:
         us = cls()
 
         words = argument.split()
+        await us.start_parsing(ctx, words)
+
         while words:
             for izer in (lambda l: (-l, None), lambda l: (None, l)):
                 for kw, f in KEYWORDS.items():
@@ -244,6 +249,7 @@ class PlayerSpecifier(IdentitySpecifier):
     ign: str | None = None
 
     async def matches(self, game: gamelogs.GameResult, player: gamelogs.Player) -> bool:
+        print(self)
         return (
             (player.starting_ident.role in self.roles or player.ending_ident.role in self.roles)
         and (self.faction is None or player.ending_ident.faction == self.faction)
@@ -271,15 +277,16 @@ class PlayerSpecifier(IdentitySpecifier):
 
         return f"({' AND '.join(clauses)})", p
 
-    async def finish_parsing(self, ctx: Context, words: list[str]) -> None:
+    async def start_parsing(self, ctx: Context, words: list[str]) -> None:
         for i, word in reversed(list(enumerate(words))):
             if word.startswith("ign:"):
-                self.ign = " ".join([word.removeprefix("ign:"), *words[i+1:]]).strip().replace("\u200b", "")
+                self.ign = " ".join([word.removeprefix("ign:"), *words[i+1:]]).replace("\u200b", "").strip()
                 del words[i:]
                 break
 
+    async def finish_parsing(self, ctx: Context, words: list[str]) -> None:
         title = " ".join(words)
         if title.startswith("account:"):
-            self.name = title.removeprefix("account:").strip().replace("\u200b", "")
+            self.name = title.removeprefix("account:").replace("\u200b", "").strip()
         elif title:
             self.player = await PlayerInfo.convert(ctx, title)
