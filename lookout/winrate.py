@@ -13,7 +13,7 @@ class Winrate:
         n = self.n
         avg = s / n
         divisor = 1 + z*z / n
-        return (avg + (z*z/(2*n))) / divisor, z/(2*n) * math.sqrt(4 * n * avg * (1-avg) + z*z) / divisor
+        return (avg + z*z/(2*n)) / divisor, z/(2*n) * math.sqrt(4 * n * avg * (1-avg) + z*z) / divisor
 
     def centre(self) -> float:
         return self.interval()[0]
