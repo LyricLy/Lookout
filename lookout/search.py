@@ -273,7 +273,7 @@ class SearchQuery(commands.FlagConverter, case_insensitive=True):
             p[f"count_{i}"] = count
             p.update(p2)
 
-        games = await bot.require_cog(Stats).games(f"{' '.join(joins)} WHERE ({' AND '.join(where) if where else '1'}) GROUP BY gist ORDER BY rowid DESC", p)
+        games = await bot.require_cog(Stats).games(f"{' '.join(joins)} WHERE ({' AND '.join(where) if where else '1'}) GROUP BY gist ORDER BY Games.rowid DESC", p)
 
         if self.chat:
             patterns = []
